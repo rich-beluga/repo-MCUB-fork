@@ -1,8 +1,11 @@
+# github: https://github.com/hairpin01/repo-MCUB-fork
+# Channel: https://t.me/LinuxGram2
+# -------------------- Meta data ---------------------------
 # requires: random
 # author: @codrago_m
 # version: 1.0.0
-# description: Your Best doxing tool! (For entertainment purposes only)
-
+# description: Your Best doxing tool! (For entertainment purposes only) / Ваш лучший инструмент доксинга! (Только в развлекательных целях)
+# ----------------------- End ------------------------------
 import random
 import asyncio
 
