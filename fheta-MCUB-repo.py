@@ -1,3 +1,14 @@
+# github MCUB repo: https://github.com/hairpin01/repo-MCUB-fork
+# github fheta https://github.com/Fixyres/FHeta/
+# Fheta Updates Channel: https://t.me/FHeta_Updates
+# Bot fheta: @FHeta_Robot
+# My channel: https://t.me/LinuxGram2
+# -------------------- Meta data ---------------------------
+# requires: 
+# author: @Fixyres && @Hairpin00
+# version: 1.4.0
+# description: Fheta for MCUB! / Фхета в MCUB! @FHeta_Updates
+# ----------------------- End ------------------------------
 import asyncio
 import aiohttp
 import ssl
@@ -32,7 +43,7 @@ def register(kernel):
             })
             self.config = config
 
-            # Локализованные строки
+            
             self.strings = {
                 'ru': {
                     'enter_query': 'Введите запрос для поиска.',
@@ -301,6 +312,7 @@ def register(kernel):
     asyncio.create_task(fheta_init())
 
     @kernel.register_command('fheta')
+    # <запрос> найти модуль для heroku/hikka
     async def fheta_handler(event):
         args = event.text.split(maxsplit=1)
         if len(args) < 2:
