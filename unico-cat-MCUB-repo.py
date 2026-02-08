@@ -16,7 +16,7 @@ from telethon.tl.types import (
     InputMessagesFilterVideo,
 )
 
-UNICO_CHANNEL_ID = -1003716240073  # https://t.me/unico_1213213213
+UNICO_CHANNEL_ID = 'unico_1213213213' # -1003716240073
 
 def register(kernel):
     language = kernel.config.get('language', 'en')
