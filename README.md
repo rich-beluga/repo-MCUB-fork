@@ -15,7 +15,7 @@
 ```
 .addrepo https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/refs/heads/main/liber/
 ```
-
+> [!TIP] там находятся маленькие модули но могут пригодится
 ### Проблемы?
 сделайте `.restart`
 или
