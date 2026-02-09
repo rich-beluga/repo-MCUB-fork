@@ -1,8 +1,13 @@
+# github: https://github.com/hairpin01/repo-MCUB-fork
+# source github (original): https://github.com/Deseara/D-modules/blob/main/joke_module.py
+# Channel: https://t.me/LinuxGram2
+# Author channel: https://t.me/Desearamodules
+# -------------------- Meta data ---------------------------
 # requires: aiohttp
-# author: @desearamodules
+# author: @Deseara && port: @Hairpin00
 # version: 2.0
 # description: Отправляет переведенные шутки с JokeAPI
-
+# ----------------------- End ------------------------------
 import aiohttp
 from telethon import Button
 import json
