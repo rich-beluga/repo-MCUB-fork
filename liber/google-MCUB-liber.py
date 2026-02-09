@@ -213,7 +213,7 @@ def register(kernel):
     kernel.register_inline_handler("google", universal_inline_handler)
     kernel.register_inline_handler("img", universal_inline_handler)
 
-    @kernel.register_command('google')
+    @kernel.register.command('google')
     # .google <query> - Text search
     async def google_cmd(event):
         args = event.text.split(maxsplit=1)
@@ -224,7 +224,7 @@ def register(kernel):
         success, _ = await kernel.inline_query_and_click(event.chat_id, f"google {query}")
         if success: await event.delete()
 
-    @kernel.register_command('img')
+    @kernel.register.command('img')
     # .img <query> - Image search
     async def img_cmd(event):
 
