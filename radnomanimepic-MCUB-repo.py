@@ -11,14 +11,22 @@
 #  --------------------------------------
 #  https://creativecommons.org/licenses/by-nd/4.0/legalcode
 # =======================================
-# author: @ke_mods
+# github repo (MCUB): https://github.com/hairpin01/repo-MCUB-fork
+# source modules (original): https://raw.githubusercontent.com/radiocycle/Modules/refs/heads/master/randomanimepic.py
+# Port Autor Channel: https://t.me/LinuxGram2
+# -------------------- Meta data ---------------------------
+# requires:
+# author: @ke_mods && port: @Hairpin00
+# version: 1.4.0
 # description: anime pic
+# ----------------------- End ------------------------------
 
 import asyncio
 import aiohttp
 
 def register(kernel):
     @kernel.register_command('rapic')
+    # random anime pic
     async def random_anime_pic_cmd(event):
         strings = {
             "ru": {
