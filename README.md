@@ -10,6 +10,12 @@
 ```
 или установите в ядре по умолчанию repo
 
+# Liber repo
+**дополнительные модули**
+```
+.addrepo https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/refs/heads/main/liber/
+```
+
 ### Проблемы?
 сделайте `.restart`
 или
