@@ -45,7 +45,7 @@ def register(kernel):
         except aiosqlite.OperationalError:
             return False
 
-    @kernel.register_command('log')
+    @kernel.register.command('log')
     # usage: log on/off/clear/deleted/edited
     async def log_cmd(event):
         try:

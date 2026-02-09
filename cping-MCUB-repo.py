@@ -25,7 +25,7 @@ def register(kernel):
         except Exception as e:
             return f"Ошибка: {str(e)}"
 
-    @kernel.register_command('cping')
+    @kernel.register.command('cping')
     # cping
     async def inline_cping(event):
 

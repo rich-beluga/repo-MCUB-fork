@@ -9,7 +9,7 @@ import asyncio
 def register(kernel):
     client = kernel.client
 
-    @kernel.register_command('fastfetch')
+    @kernel.register.command('fastfetch')
     # вывод системной информации
     async def handler(event):
         try:

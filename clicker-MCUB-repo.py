@@ -42,7 +42,7 @@ def register(kernel):
 
     kernel.register_inline_handler('clicker', clicker_inline_handler)
 
-    @kernel.register_command('clicker')
+    @kernel.register.command('clicker')
     async def clicker_command_handler(event):
         try:
             bot_username = kernel.config.get('inline_bot_username')

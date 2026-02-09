@@ -179,7 +179,7 @@ def register(kernel):
         else:
             return await send_admin_log_inline(action, target_user, chat, reason, source_message)
 
-    @kernel.register_command('ban')
+    @kernel.register.command('ban')
     async def ban_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -240,7 +240,7 @@ def register(kernel):
             await kernel.handle_error(e, source="ban_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('unban')
+    @kernel.register.command('unban')
     async def unban_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -293,7 +293,7 @@ def register(kernel):
             await kernel.handle_error(e, source="unban_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('kick')
+    @kernel.register.command('kick')
     async def kick_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -335,7 +335,7 @@ def register(kernel):
             await kernel.handle_error(e, source="kick_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('mute')
+    @kernel.register.command('mute')
     async def mute_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -403,7 +403,7 @@ def register(kernel):
             await kernel.handle_error(e, source="mute_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('unmute')
+    @kernel.register.command('unmute')
     async def unmute_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -452,7 +452,7 @@ def register(kernel):
             await kernel.handle_error(e, source="unmute_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('warn')
+    @kernel.register.command('warn')
     async def warn_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -509,7 +509,7 @@ def register(kernel):
             await kernel.handle_error(e, source="warn_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('unwarn')
+    @kernel.register.command('unwarn')
     async def unwarn_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -537,7 +537,7 @@ def register(kernel):
             await kernel.handle_error(e, source="unwarn_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('warns')
+    @kernel.register.command('warns')
     async def warns_cmd(event):
         try:
             if not event.is_group and not event.is_channel:
@@ -566,7 +566,7 @@ def register(kernel):
             await kernel.handle_error(e, source="warns_cmd", event=event)
             await event.edit("🌩️ <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('purge')
+    @kernel.register.command('purge')
     async def purge_cmd(event):
         try:
             if not event.is_group and not event.is_channel:

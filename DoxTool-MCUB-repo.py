@@ -30,7 +30,7 @@ def register(kernel):
         "what won't it lead to?"
     ]
 
-    @kernel.register_command('gb')
+    @kernel.register.command('gb')
     async def gb_handler(event):
         await event.edit(strings["gb_1"])
         await asyncio.sleep(1)
@@ -44,10 +44,10 @@ def register(kernel):
         await asyncio.sleep(1)
         await event.edit(strings["gb_r"])
 
-    @kernel.register_command('deanon')
+    @kernel.register.command('deanon')
     async def deanon_handler(event):
         await event.edit(random.choice(deanon_messages))
 
-    @kernel.register_command('dinfo')
+    @kernel.register.command('dinfo')
     async def dinfo_handler(event):
         await event.edit(strings["info"])

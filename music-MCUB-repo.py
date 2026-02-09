@@ -15,7 +15,7 @@ def register(kernel):
     client = kernel.client
     prefix = kernel.custom_prefix
 
-    @kernel.register_command('shazam')
+    @kernel.register.command('shazam')
     # recognize music from audio/video/voice message
     async def shazam_cmd(event):
         try:

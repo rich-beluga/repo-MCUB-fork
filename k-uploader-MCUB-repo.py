@@ -44,7 +44,7 @@ class UploaderModule:
 def register(kernel):
     uploader = UploaderModule(kernel)
 
-    @kernel.register_command('catbox')
+    @kernel.register.command('catbox')
     async def catbox_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -65,7 +65,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="catbox_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('envs')
+    @kernel.register.command('envs')
     async def envs_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -82,7 +82,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="envs_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('kappa')
+    @kernel.register.command('kappa')
     async def kappa_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -101,7 +101,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="kappa_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('0x0')
+    @kernel.register.command('0x0')
     async def oxo_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -122,7 +122,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="oxo_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('x0')
+    @kernel.register.command('x0')
     async def x0_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -139,7 +139,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="x0_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('tmpfiles')
+    @kernel.register.command('tmpfiles')
     async def tmpfiles_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -161,7 +161,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="tmpfiles_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('pomf')
+    @kernel.register.command('pomf')
     async def pomf_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -183,7 +183,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="pomf_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('bash')
+    @kernel.register.command('bash')
     async def bash_handler(event):
         await event.edit(uploader.uploading_text)
         file = await uploader.get_file(event)
@@ -208,7 +208,7 @@ def register(kernel):
             await uploader.kernel.handle_error(e, source="bash_handler", event=event)
             await event.edit(uploader.error_text.format(str(e)))
 
-    @kernel.register_command('upload')
+    @kernel.register.command('upload')
     async def upload_handler(event):
         help_text = """
 📤 **Доступные сервисы для загрузки:**

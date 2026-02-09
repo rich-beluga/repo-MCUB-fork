@@ -8,7 +8,7 @@ from utils.arg_parser import parse_arguments
 def register(kernel):
     client = kernel.client
     bot = kernel.bot_client
-    @kernel.register_command('bot') # <msg> - ваше соо (html поддерживает)
+    @kernel.register.command('bot') # <msg> - ваше соо (html поддерживает)
     async def bot_cmd(event):
         parser = parse_arguments(event.text, kernel.custom_prefix)
         args = parser.args

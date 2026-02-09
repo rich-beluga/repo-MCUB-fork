@@ -869,7 +869,7 @@ def register(kernel):
             if hasattr(kernel, '_playnow_data'):
                 kernel._playnow_data['active'] = False
 
-    @kernel.register_command('lyrics')
+    @kernel.register.command('lyrics')
     # Получить текст текущего трека
     async def lyrics_cmd(event):
 
@@ -933,7 +933,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Произошла ошибка:</b> <code>{str(e)}</code>", parse_mode='html')
 
-    @kernel.register_command('spauth')
+    @kernel.register.command('spauth')
     # Войти в свой аккаунт
     async def spauth_cmd(event):
         if not kernel.config.get('spots_client_id') or not kernel.config.get('spots_client_secret'):
@@ -960,7 +960,7 @@ def register(kernel):
             parse_mode='html'
         )
 
-    @kernel.register_command('spcode')
+    @kernel.register.command('spcode')
     # Ввести код авторизации
     async def spcode_cmd(event):
         if not kernel.config.get('spots_client_id') or not kernel.config.get('spots_client_secret'):
@@ -1001,7 +1001,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Произошла ошибка:</b> <code>{str(e)}</code>", parse_mode='html')
 
-    @kernel.register_command('spnow')
+    @kernel.register.command('spnow')
     # Текущий трек
     async def spnow_cmd(event):
         if not kernel.config.get('spots_auth_token'):
@@ -1094,7 +1094,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Произошла ошибка:</b> <code>{str(e)}</code>", parse_mode='html')
 
-    @kernel.register_command('now')
+    @kernel.register.command('now')
     # Красивая карточка с текущим треком
     async def now_cmd(event):
         if not kernel.config.get('spots_auth_token'):
@@ -1178,7 +1178,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Произошла ошибка:</b> <code>{str(e)}</code>", parse_mode='html')
 
-    @kernel.register_command('rlyrics')
+    @kernel.register.command('rlyrics')
     # Показать текст текущего трека в реальном времени
     async def rlyrics_cmd(event):
         if not kernel.config.get('spots_auth_token'):
@@ -1242,7 +1242,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Произошла ошибка:</b> <code>{str(e)}</code>", parse_mode='html')
 
-    @kernel.register_command('stoplyrics')
+    @kernel.register.command('stoplyrics')
     # Остановить обновление текста в реальном времени
     async def stoplyrics_cmd(event):
 
@@ -1252,7 +1252,7 @@ def register(kernel):
         else:
             await event.edit("❌ <b>Сеанс синхронизации не активен</b>", parse_mode='html')
 
-    @kernel.register_command('playnow')
+    @kernel.register.command('playnow')
     # Live-отображение текущего трека с текстом в реальном времени
     async def playnow_cmd(event):
 
@@ -1333,7 +1333,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Произошла ошибка:</b> <code>{str(e)}</code>", parse_mode='html')
 
-    @kernel.register_command('stopplaynow')
+    @kernel.register.command('stopplaynow')
     # Остановить live-отображение трека
     async def stopplaynow_cmd(event):
         if hasattr(kernel, '_playnow_data') and kernel._playnow_data.get('active'):

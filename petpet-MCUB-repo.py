@@ -65,7 +65,7 @@ def register(kernel):
 
     asyncio.create_task(check_ffmpeg())
 
-    @kernel.register_command('pet')
+    @kernel.register.command('pet')
     # pet
     async def pet_handler(event):
         try:

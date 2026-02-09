@@ -49,7 +49,7 @@ def register(kernel):
                     async with session.post(url, headers=headers, data=data) as resp:
                         return await resp.json() if resp.status == 200 else None
 
-    @kernel.register_command('setvtkey')
+    @kernel.register.command('setvtkey')
     async def setvtkey_command(event):
         """Установить API ключ VirusTotal"""
         args = event.text.split(maxsplit=1)
@@ -70,7 +70,7 @@ def register(kernel):
             parse_mode='html'
         )
 
-    @kernel.register_command('vtscan')
+    @kernel.register.command('vtscan')
     async def vtscan_command(event):
         """Просканировать файл через VirusTotal"""
         config = await get_config()

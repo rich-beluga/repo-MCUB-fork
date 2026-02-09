@@ -117,7 +117,7 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="set_emoji_status", event=None)
 
-    @kernel.register_command('afk')
+    @kernel.register.command('afk')
     # [причина] [возращение]
     async def afk_cmd(event):
         try:
@@ -166,7 +166,7 @@ def register(kernel):
             await kernel.handle_error(e, source="afk_cmd", event=event)
             await event.edit(f"{PREMIUM_EMOJI['error']} <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('unafk')
+    @kernel.register.command('unafk')
     # выйти из afk
     async def unafk_cmd(event):
         try:
@@ -191,7 +191,7 @@ def register(kernel):
             await kernel.handle_error(e, source="unafk_cmd", event=event)
             await event.edit(f"{PREMIUM_EMOJI['error']} <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('afkstatus')
+    @kernel.register.command('afkstatus')
     async def afkstatus_cmd(event):
         try:
             afk_status = kernel.config.get('afk_status')
@@ -216,7 +216,7 @@ def register(kernel):
             await kernel.handle_error(e, source="afkstatus_cmd", event=event)
             await event.edit(f"{PREMIUM_EMOJI['error']} <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('ignorusers')
+    @kernel.register.command('ignorusers')
     async def ignorusers_cmd(event):
         try:
             args = event.text.split()
@@ -241,7 +241,7 @@ def register(kernel):
             await kernel.handle_error(e, source="ignorusers_cmd", event=event)
             await event.edit(f"{PREMIUM_EMOJI['error']} <b>Ошибка, смотри логи</b>", parse_mode='html')
 
-    @kernel.register_command('timeafk')
+    @kernel.register.command('timeafk')
     async def timeafk_cmd(event):
         try:
             args = event.text.split()

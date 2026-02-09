@@ -127,7 +127,7 @@ def register(kernel):
     client.add_event_handler(kickme_handler, pattern_handler)
     
     
-    @kernel.register_command('kickme_status')
+    @kernel.register.command('kickme_status')
     # show kickme module status
     async def status_cmd(event):
         try:
@@ -140,7 +140,7 @@ def register(kernel):
             await kernel.handle_error(e, source="status_cmd", event=event)
             await event.edit("🌩️ <b>Error, check logs</b>", parse_mode='html')
     
-    @kernel.register_command('set_kickme_chat')
+    @kernel.register.command('set_kickme_chat')
     # set kickme chat id
     async def set_chat_cmd(event):
         try:

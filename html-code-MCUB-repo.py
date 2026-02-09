@@ -52,7 +52,7 @@ def register(kernel):
 
         return html_result
 
-    @kernel.register_command('html_code')
+    @kernel.register.command('html_code')
     async def html_code_handler(event):
         try:
             if event.is_reply:

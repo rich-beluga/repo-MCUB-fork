@@ -374,7 +374,7 @@ def register(kernel):
 
         return success
 
-    @kernel.register_command('rf')
+    @kernel.register.command('rf')
     async def rf_handler(event):
         nonlocal chunks, file_info, file_content, file_path, analyzed_count, current_message_id, current_chat_id
 
@@ -421,7 +421,7 @@ def register(kernel):
             await event.edit("❌ Ошибка создания формы")
             return
 
-    @kernel.register_command('rfcache')
+    @kernel.register.command('rfcache')
     async def rfcache_handler(event):
         total_bytes, total_files = get_cache_stats()
         size_str = format_size(total_bytes)
@@ -442,7 +442,7 @@ def register(kernel):
         if success:
             await event.delete()
 
-    @kernel.register_command('rfconfig')
+    @kernel.register.command('rfconfig')
     async def rfconfig_handler(event):
         args = event.text.split(maxsplit=2)
 

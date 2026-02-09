@@ -695,47 +695,47 @@ def register(kernel):
     
     gemini = GeminiModule()
     
-    @kernel.register_command('gg')
+    @kernel.register.command('gg')
     # <вопрос> спросить gemini
     async def gg_handler(event):
         await gemini.gg_command(event)
     
-    @kernel.register_command('gclear')
+    @kernel.register.command('gclear')
     # очистить историю
     async def gclear_handler(event):
         await gemini.gclear_command(event)
     
-    @kernel.register_command('gauto')
+    @kernel.register.command('gauto')
     # авто ответчик
     async def gauto_handler(event):
         await gemini.gauto_command(event)
     
-    @kernel.register_command('gmodel')
+    @kernel.register.command('gmodel')
     # <model> поменять модель gemini
     async def gmodel_handler(event):
         await gemini.gmodel_command(event)
     
-    @kernel.register_command('gprompt')
+    @kernel.register.command('gprompt')
     # поставить промпт
     async def gprompt_handler(event):
         await gemini.gprompt_command(event)
     
-    @kernel.register_command('gres')
+    @kernel.register.command('gres')
     # спросить ещё раз
     async def gres_handler(event):
         await gemini.gres_command(event)
     
-    @kernel.register_command('gconfig')
+    @kernel.register.command('gconfig')
     # значения: api_keys, temperature, max_history_length, use_inline, show_buttons ...
     async def gconfig_handler(event):
         await gemini.gconfig_command(event)
     
-    @kernel.register_command('gcfg')
+    @kernel.register.command('gcfg')
     # что включено сейчас
     async def gcfg_handler(event):
         await gemini.gcfg_command(event)
     
-    @kernel.register_command('ghelp')
+    @kernel.register.command('ghelp')
     # help gemini
     async def ghelp_handler(event):
         await gemini.ghelp_command(event)

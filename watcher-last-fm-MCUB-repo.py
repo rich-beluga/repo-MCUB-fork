@@ -281,7 +281,7 @@ def register(kernel):
             return parts[0], parts[1:]
         return parts[0] if parts else "", []
     
-    @kernel.register_command('lastfminit')
+    @kernel.register.command('lastfminit')
     async def lastfminit_handler(event):
         try:
             cmd_name, args = extract_args(event.text)
@@ -342,7 +342,7 @@ def register(kernel):
             await kernel.handle_error(e, source="lastfminit_handler", event=event)
             await event.edit("❌ Ошибка инициализации", parse_mode='html')
     
-    @kernel.register_command('setchat')
+    @kernel.register.command('setchat')
     async def setchat_handler(event):
         cmd_name, args = extract_args(event.text)
         
@@ -370,7 +370,7 @@ def register(kernel):
         except Exception as e:
             await event.edit(f"❌ Ошибка: {str(e)}", parse_mode='html')
     
-    @kernel.register_command('musicservice')
+    @kernel.register.command('musicservice')
     async def musicservice_handler(event):
         cmd_name, args = extract_args(event.text)
         
@@ -389,7 +389,7 @@ def register(kernel):
         
         await event.edit(f"✅ Сервис изменен на <b>{service}</b>", parse_mode='html')
     
-    @kernel.register_command('musicconfig')
+    @kernel.register.command('musicconfig')
     async def musicconfig_handler(event):
         config = kernel.config
         service = config.get('service_type', 'lastfm')
@@ -431,7 +431,7 @@ def register(kernel):
         
         await event.edit(message, parse_mode='html')
     
-    @kernel.register_command('musicset')
+    @kernel.register.command('musicset')
     async def musicset_handler(event):
         cmd_name, args = extract_args(event.text)
         
@@ -472,7 +472,7 @@ def register(kernel):
         
         await event.edit(f"✅ {key} = {value}", parse_mode='html')
     
-    @kernel.register_command('musicstatus')
+    @kernel.register.command('musicstatus')
     async def musicstatus_handler(event):
         service = kernel.config.get('service_type', 'lastfm')
         
@@ -496,12 +496,12 @@ def register(kernel):
         
         await event.edit(message, parse_mode='html')
     
-    @kernel.register_command('musicpause')
+    @kernel.register.command('musicpause')
     async def musicpause_handler(event):
         state['pause_until'] = asyncio.get_event_loop().time() + 3600
         await event.edit("✅ Мониторинг приостановлен на 1 час", parse_mode='html')
     
-    @kernel.register_command('musicresume')
+    @kernel.register.command('musicresume')
     async def musicresume_handler(event):
         state['pause_until'] = 0
         state['error_count'] = 0

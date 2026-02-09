@@ -7,7 +7,7 @@ from telethon import events, Button
 def register(kernel):
     client = kernel.client # client
     bot = kernel.bot_client # inline bot
-    @kernel.register_command('menu_button')
+    @kernel.register.command('menu_button')
     # menu inline
     async def menu_cmd(event):
         # register command: {kernel.custom_prefix}menu_button. '' <- yes. "" <- no usage

@@ -71,7 +71,7 @@ def register(kernel):
             return None
         return None
 
-    @kernel.register_command('wiki')
+    @kernel.register.command('wiki')
     # поиск информации в Википедии
     async def wiki_handler(event):
         args = event.text.split()

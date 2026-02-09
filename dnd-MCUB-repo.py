@@ -245,11 +245,11 @@ def register(kernel):
         module_temp_data['sent_messages'] = []
         module_temp_data['ratelimit_afk'].clear()
     
-    @kernel.register_command('cdnd')
+    @kernel.register.command('cdnd')
     async def cdnd_cmd(event):
         await event.edit(f"{CUSTOM_EMOJI['lock']} <b>Используйте:</b> <code>{prefix}cfg</code> <b>для настройки модуля</b>", parse_mode='html')
     
-    @kernel.register_command('pmbanlast')
+    @kernel.register.command('pmbanlast')
     async def pmbanlast_cmd(event):
         args = event.text.split()
         if len(args) < 2 or not args[1].isdigit():
@@ -275,7 +275,7 @@ def register(kernel):
         
         await event.edit(f"{CUSTOM_EMOJI['cloud']} <b>Удалил {n} последних диалогов!</b>", parse_mode='html')
     
-    @kernel.register_command('allowpm')
+    @kernel.register.command('allowpm')
     async def allowpm_cmd(event):
         user = None
         args = event.text.split()
@@ -301,7 +301,7 @@ def register(kernel):
         _approve(user.id, "manual_approve")
         await event.edit(f'{CUSTOM_EMOJI["cloud"]} <b><a href="tg://user?id={user.id}">{get_display_name(user)}</a> допущен к ЛС.</b>', parse_mode='html')
     
-    @kernel.register_command('denypm')
+    @kernel.register.command('denypm')
     async def denypm_cmd(event):
         user = None
         args = event.text.split()
@@ -327,7 +327,7 @@ def register(kernel):
         _unapprove(user.id)
         await event.edit(f'{CUSTOM_EMOJI["cloud"]} <b><a href="tg://user?id={user.id}">{get_display_name(user)}</a> не допущен к ЛС.</b>', parse_mode='html')
     
-    @kernel.register_command('block')
+    @kernel.register.command('block')
     async def block_cmd(event):
         if not event.is_reply:
             await event.edit(f"{CUSTOM_EMOJI['info']} <b>Ответьте на сообщение, чтобы заблокировать пользователя</b>", parse_mode='html')
@@ -345,7 +345,7 @@ def register(kernel):
         
         await event.edit(log_msg, parse_mode='html', buttons=buttons)
     
-    @kernel.register_command('unblock')
+    @kernel.register.command('unblock')
     async def unblock_cmd(event):
         if not event.is_reply:
             await event.edit(f"{CUSTOM_EMOJI['info']} <b>Ответьте на сообщение, чтобы разблокировать пользователя</b>", parse_mode='html')
@@ -357,7 +357,7 @@ def register(kernel):
         await client(UnblockRequest(id=user.id))
         await event.edit(f'{CUSTOM_EMOJI["cloud"]} <b><a href="tg://user?id={user.id}">{get_display_name(user)}</a> разблокирован.</b>', parse_mode='html')
     
-    @kernel.register_command('report')
+    @kernel.register.command('report')
     async def report_cmd(event):
         chat = await event.get_chat()
         if not isinstance(chat, User):
@@ -367,7 +367,7 @@ def register(kernel):
         await client(ReportSpamRequest(peer=chat.id))
         await event.edit("⚠️ <b>Отправил жалобу на спам!</b>", parse_mode='html')
     
-    @kernel.register_command('newstatus')
+    @kernel.register.command('newstatus')
     async def newstatus_cmd(event):
         args = raw_text(event, strip_command=True).split(' ', 2)
         if len(args) < 3:
@@ -392,7 +392,7 @@ def register(kernel):
             parse_mode='html'
         )
     
-    @kernel.register_command('delstatus')
+    @kernel.register.command('delstatus')
     async def delstatus_cmd(event):
         args = event.text.split()
         if len(args) < 2:
@@ -416,7 +416,7 @@ def register(kernel):
         
         await event.edit(f"<b>{CUSTOM_EMOJI['check']} Статус {name} удалён</b>", parse_mode='html')
     
-    @kernel.register_command('statuses')
+    @kernel.register.command('statuses')
     async def statuses_cmd(event):
         texts = kernel.config.get('dnd_texts', {})
         notifs = kernel.config.get('dnd_notif', {})
@@ -432,7 +432,7 @@ def register(kernel):
         
         await event.edit(res, parse_mode='html')
     
-    @kernel.register_command('status')
+    @kernel.register.command('status')
     async def status_cmd(event):
         args = raw_text(event, strip_command=True).split(' ', 2)
         if len(args) < 1:
@@ -500,7 +500,7 @@ def register(kernel):
         msg = await event.edit(status_text, parse_mode='html')
         module_temp_data['sent_messages'].append(msg)
     
-    @kernel.register_command('unstatus')
+    @kernel.register.command('unstatus')
     async def unstatus_cmd(event):
         if not kernel.config.get('dnd_status'):
             await event.edit(f"{CUSTOM_EMOJI['warning']} <b>Нет активного статуса</b>", parse_mode='html')

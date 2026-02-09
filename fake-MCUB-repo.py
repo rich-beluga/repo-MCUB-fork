@@ -44,7 +44,7 @@ def register(kernel):
             await client(SetTypingRequest(peer=chat_id, action=SendMessageCancelAction()))
             raise
 
-    @kernel.register_command('fake')
+    @kernel.register.command('fake')
     # имитация действий пользователя
     async def fake_handler(event):
         global fake_tasks

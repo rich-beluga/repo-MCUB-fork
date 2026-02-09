@@ -178,7 +178,7 @@ def register(kernel):
 
         asyncio.create_task(auto_parse_startup())
 
-    @kernel.register_command('parsetriggers')
+    @kernel.register.command('parsetriggers')
     # обновить базу триггеров из канала
     async def parsetriggers_cmd(event):
         await run_parser(event)
@@ -214,7 +214,7 @@ def register(kernel):
                 ttype, trigger = "exact", content_after.strip().lower()
         return ttype, trigger
 
-    @kernel.register_command('addtrigger')
+    @kernel.register.command('addtrigger')
     # добавить новый триггер (ответ на сообщение + текст триггера)
     async def addtrigger_cmd(event):
         try:

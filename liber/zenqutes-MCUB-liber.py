@@ -41,7 +41,7 @@ def register(kernel):
         except Exception as e:
             return f"{lang_strings['network_error']}: {str(e)}"
 
-    @kernel.register_command('zquote')
+    @kernel.register.command('zquote')
     # Отправляет случайную мудрую цитату
     async def quote_handler(event):
         try:

@@ -115,7 +115,7 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="farm_loop", event=None)
 
-    @kernel.register_command('farm')
+    @kernel.register.command('farm')
     async def farm_handler(event):
         """Управление фармингом"""
         nonlocal farm_task

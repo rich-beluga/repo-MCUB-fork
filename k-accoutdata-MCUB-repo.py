@@ -255,7 +255,7 @@ async def register(kernel):
 
     estimator = RegistrationDateEstimator()
 
-    @kernel.register_command('aboutacc')
+    @kernel.register.command('aboutacc')
     # Получить информацию об аккаунте (юзернейм/реплай)
     async def aboutacc_handler(event):
         """<username/reply> - Получить информацию об аккаунте"""

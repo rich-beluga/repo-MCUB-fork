@@ -85,7 +85,7 @@ def register(kernel):
         except:
             pass
 
-    @kernel.register_command('lhe')
+    @kernel.register.command('lhe')
     # управление скрытой привязкой ссылки (on/off/status)
     async def toggle_handler(event):
         args = event.text.split()
@@ -109,7 +109,7 @@ def register(kernel):
 
         config.save_config()
 
-    @kernel.register_command('setlhe')
+    @kernel.register.command('setlhe')
     # установка ссылки для скрытой привязки
     async def setlink_handler(event):
         args = event.text.split(maxsplit=1)

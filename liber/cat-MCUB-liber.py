@@ -30,7 +30,7 @@ def register(kernel):
     }
     lang_strings = strings.get(language, strings['ru'])
 
-    @kernel.register_command('cat')
+    @kernel.register.command('cat')
     # ru: отправить котика / en: send random cat
     async def cat_handler(event):
         try:

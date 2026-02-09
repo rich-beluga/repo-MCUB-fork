@@ -27,7 +27,7 @@ def register(kernel):
                     return await resp.text()
         return None
 
-    @kernel.register_command('short')
+    @kernel.register.command('short')
     # сокращение ссылки (tinyurl)
     async def shorturl_handler(event):
         args = event.text.split()

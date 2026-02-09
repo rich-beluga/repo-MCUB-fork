@@ -7,7 +7,7 @@ import asyncio
 def register(kernel):
     client = kernel.client
     
-    @kernel.register_command('del')
+    @kernel.register.command('del')
     async def del_handler(event):
         try:
             args = event.text.split()

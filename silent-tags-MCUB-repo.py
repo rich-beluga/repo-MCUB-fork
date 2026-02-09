@@ -53,7 +53,7 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="silent_tags:update_blocked_list")
     
-    @kernel.register_command('stags')
+    @kernel.register.command('stags')
     # <on\off> - Toggle notifications about tags
     async def stagscmd(event):
         try:

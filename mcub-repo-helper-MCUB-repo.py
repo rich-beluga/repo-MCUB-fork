@@ -160,7 +160,7 @@ def register(kernel):
         result, error = await update_file("name.ini", repo_name, commit_message)
         return result, error
 
-    @kernel.register_command('mru')
+    @kernel.register.command('mru')
     # Загрузить модуль в репозиторий MCUB
     # Использование: .mru -s [имя_файла] -n [имя_модуля]
     # или: .mru -e [новое_имя_репозитория]
@@ -265,7 +265,7 @@ def register(kernel):
             await kernel.handle_error(e, source="mru_command", event=event)
             await event.edit("❌ Ошибка при загрузке модуля. Проверьте логи.")
 
-    @kernel.register_command('mru-setup')
+    @kernel.register.command('mru-setup')
     # Настройка параметров загрузки
     async def mru_setup_command(event):
         try:

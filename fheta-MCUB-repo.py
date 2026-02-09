@@ -311,7 +311,7 @@ def register(kernel):
 
     asyncio.create_task(fheta_init())
 
-    @kernel.register_command('fheta')
+    @kernel.register.command('fheta')
     # <запрос> найти модуль для heroku/hikka
     async def fheta_handler(event):
         args = event.text.split(maxsplit=1)

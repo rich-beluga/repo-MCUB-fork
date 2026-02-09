@@ -25,7 +25,7 @@ import asyncio
 import aiohttp
 
 def register(kernel):
-    @kernel.register_command('rapic')
+    @kernel.register.command('rapic')
     # random anime pic
     async def random_anime_pic_cmd(event):
         strings = {
