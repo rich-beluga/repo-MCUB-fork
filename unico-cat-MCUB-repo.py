@@ -112,7 +112,7 @@ def register(kernel):
             await kernel.log_error(lang_strings['fetch_error'].format(e))
             return []
 
-    @kernel.register_command('unico')
+    @kernel.register.command('unico')
     # отправить юне / send unico
     async def unico_handler(event):
         try:
