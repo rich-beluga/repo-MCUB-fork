@@ -34,7 +34,8 @@ def register(kernel):
     language = kernel.config.get('language', 'en')
     s = strings.get(language, strings['en'])
 
-    @kernel.register_command('spam')
+    @kernel.register.command('spam')
+    # spam <count> <sms>
     async def spam_handler(event):
         """Обработчик команды спама"""
         args = event.text.split(maxsplit=2)
