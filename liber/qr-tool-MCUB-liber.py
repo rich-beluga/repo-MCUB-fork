@@ -24,7 +24,7 @@ from telethon.tl.types import DocumentAttributeFilename
 
 def register(kernel):
 
-    @kernel.register_command('makeqr')
+    @kernel.register.command('makeqr')
     # .makeqr <text> - generate QR code | .makeqr .file <text> - generate QR code as file |  Reply to message with .makeqr - generate QR from replied text
     async def makeqr_handler(event):
         try:
@@ -84,7 +84,7 @@ def register(kernel):
             await kernel.handle_error(e, source="makeqr", event=event)
             await event.edit("❌ Ошибка при генерации QR-кода", parse_mode='html')
 
-    @kernel.register_command('readqr')
+    @kernel.register.command('readqr')
     # .readqr - read QR from replied image | .readqr <image attached> - read QR from attached image
     async def readqr_handler(event):
         try:
