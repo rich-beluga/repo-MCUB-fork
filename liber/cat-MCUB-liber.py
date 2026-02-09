@@ -49,7 +49,7 @@ def register(kernel):
                             event.chat_id,
                             image_url,
                             caption=lang_strings['photo_caption'],
-                            parse_mode='htm'
+                            parse_mode='html'
                         )
                     else:
                         await msg.edit(lang_strings['api_error'], parse_mode='html')
