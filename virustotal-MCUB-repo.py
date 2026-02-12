@@ -1,6 +1,6 @@
 # requires: aiohttp, telethon
-# author: TypeFrag (Ported by MCUB Assistant)
-# version: 1.1.0
+# author: ктото
+# version: 1.1.1
 # description: VirusTotal file scanning module for MCUB
 
 import aiohttp
@@ -49,7 +49,7 @@ def register(kernel):
                     async with session.post(url, headers=headers, data=data) as resp:
                         return await resp.json() if resp.status == 200 else None
 
-    @kernel.register.command('setvtkey')
+    @kernel.register_command('setvtkey')
     async def setvtkey_command(event):
         """Установить API ключ VirusTotal"""
         args = event.text.split(maxsplit=1)
@@ -70,7 +70,7 @@ def register(kernel):
             parse_mode='html'
         )
 
-    @kernel.register.command('vtscan')
+    @kernel.register_command('vtscan')
     async def vtscan_command(event):
         """Просканировать файл через VirusTotal"""
         config = await get_config()
@@ -176,28 +176,14 @@ def register(kernel):
                 f"<b>Статус:</b> {status_text}\n"
                 f"{'━' * 25}"
             )
-            
             vt_link = f"https://www.virustotal.com/gui/file/{file_hash}"
-            
-            cache_key = f"vt_res_{file_hash}"
-            kernel.cache.set(cache_key, {'text': result_text, 'link': vt_link}, ttl=300)
-            
             await message.delete()
-            
-            # Отправляем результат через inline
-            success, result_message = await kernel.inline_query_and_click(
-                chat_id=event.chat_id,
-                query=f"vt_result {file_hash}"
+
+            await kernel.inline_form(
+                event.chat_id,
+                result_text,
+                buttons=[{"text": "🔎 Полный отчет", "type": "url", "data": f"{vt_link}"}]
             )
-            
-            if not success:
-                # Если inline не сработал, отправляем обычное сообщение
-                await event.client.send_message(
-                    event.chat_id,
-                    result_text,
-                    parse_mode='html',
-                    buttons=[[Button.url("🔎 Полный отчет", vt_link)]]
-                )
 
         except Exception as e:
             await kernel.handle_error(e, source="vtscan", event=event)
@@ -206,31 +192,3 @@ def register(kernel):
                 parse_mode='html'
             )
 
-    async def inline_vt_handler(event):
-        """Inline обработчик для результатов VirusTotal"""
-        query = event.text.strip()
-        if not query.startswith("vt_result "):
-            return
-            
-        file_hash = query.split(" ", 1)[1]
-        cache_key = f"vt_res_{file_hash}"
-        data = kernel.cache.get(cache_key)
-        
-        if not data:
-            builder = event.builder.article(
-                title="VirusTotal Result",
-                text="❌ <b>Результат устарел или не найден!</b>\nЗапустите сканирование заново.",
-                parse_mode='html'
-            )
-            await event.answer([builder])
-            return
-
-        builder = event.builder.article(
-            title="VirusTotal Результат",
-            text=data['text'],
-            buttons=[[Button.url("🔎 Полный отчет", data['link'])]],
-            parse_mode='html'
-        )
-        await event.answer([builder])
-
-    kernel.register_inline_handler('vt_result', inline_vt_handler)
