@@ -8,6 +8,7 @@
 # author: @Fixyres && @Hairpin00
 # version: 1.4.0
 # description: Fheta for MCUB! / Фхета в MCUB! @FHeta_Updates
+# scop: kernel min v1.0.2.1
 # ----------------------- End ------------------------------
 import asyncio
 import aiohttp
