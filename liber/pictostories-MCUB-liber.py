@@ -15,7 +15,7 @@
 # meta developer: @ke_mods
 # requires: pillow
 # version: 1.0.0
-# author: @ke_mods, port: @Hairpin01
+# author: @ke_mods, port: @Hairpin00
 # description: Grid 3x3 for stories
 
 import io
