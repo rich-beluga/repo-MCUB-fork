@@ -18,6 +18,9 @@
 > [!NOTE]
 > там находятся маленькие модули но могут пригодится
 
+### Kernel api doc (modules doc)
+<a href="https://github.com/hairpin01/MCUB-fork/blob/main/API_DOC.md">api doc</a>
+
 ### Проблемы?
 сделайте `.restart`
 или
