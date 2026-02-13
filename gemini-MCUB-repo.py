@@ -719,13 +719,11 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
         question_html = f"<blockquote>{escape_html(request_text_for_display[:200])}</blockquote>"
         text_to_send = f"{mem_ind}\n\n{STRINGS['question_prefix']}\n{question_html}\n\n{STRINGS['response_prefix']}{search_icon}\n{formatted_body}"
 
-
         if kernel.config.get("gemini_interactive_buttons", True) and not is_callback:
-           buttons = [
+            buttons = [
                 [Button.inline(STRINGS["btn_clear"], f"gemini_clear_{chat_id}".encode())],
                 [Button.inline(STRINGS["btn_regenerate"], f"gemini_regen_{base_message_id}_{chat_id}".encode())]
             ]
-
             if len(text_to_send) > 4096:
                 file_content = (f"Вопрос: {display_prompt}\n\n════════════════════\n\nОтвет Gemini:\n{result_text}")
                 file = io.BytesIO(file_content.encode("utf-8"))
@@ -733,7 +731,7 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
                 if status_msg:
                     await status_msg.delete()
                 await kernel.client.send_file(chat_id, file, caption=STRINGS["response_too_long"],
-                                             reply_to=base_message_id)
+                                              reply_to=base_message_id)
             else:
                 success, msg = await kernel.inline_form(
                     chat_id,
@@ -758,10 +756,11 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
                                                  reply_to=base_message_id)
             else:
                 if is_callback:
-
                     pass
+                    
                 elif status_msg:
                     await status_msg.edit(text_to_send, parse_mode='html')
+                    
     except Exception as e:
         error_text = _handle_error(e)
         if impersonation_mode:
