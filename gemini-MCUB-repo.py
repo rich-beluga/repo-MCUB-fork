@@ -721,8 +721,8 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
 
         if kernel.config.get("gemini_interactive_buttons", True) and not is_callback:
             buttons = [
-                [Button.inline(STRINGS["btn_clear"], f"gemini_clear_{chat_id}".encode())],
-                [Button.inline(STRINGS["btn_regenerate"], f"gemini_regen_{base_message_id}_{chat_id}".encode())]
+                [Button.inline(STRINGS["btn_clear"], f"gemini_clear_{chat_id}".encode()),
+                Button.inline(STRINGS["btn_regenerate"], f"gemini_regen_{base_message_id}_{chat_id}".encode())]
             ]
             if len(text_to_send) > 4096:
                 file_content = (f"Вопрос: {display_prompt}\n\n════════════════════\n\nОтвет Gemini:\n{result_text}")
