@@ -15,7 +15,7 @@
 # meta developer: @ke_mods
 # requires: pillow
 # version: 1.0.0
-# author: @ke_mods, port: @Hairpin00
+# author: @ke_mods
 # description: Grid 3x3 for stories
 
 import io
@@ -39,7 +39,7 @@ def register(kernel):
         }
     }
 
-    @kernel.register.command('pts')
+    @kernel.register_command('pts')
     # <reply to photo> - make 3x3 grid
     async def pts_cmd(event):
         lang = kernel.config.get('language', 'ru')
