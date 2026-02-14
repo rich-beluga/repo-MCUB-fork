@@ -1,6 +1,6 @@
-# author: @YouRooni && @Hairpin00
-# version: 1.0.0
-# description: отправляет медиа или текст из канала в ответ на текстовые триггеры
+# author: @YouRooni && @Hairpin00 && @kozhura_ubezhishe_player_fly
+# version: 1.1.0
+# description: отправляет медиа или текст из канала в ответ на текстовые триггеры (пересылка)
 
 import logging
 import re
@@ -288,7 +288,6 @@ def register(kernel):
             await kernel.handle_error(e, source="source_channel_watcher", event=event)
 
     client.on(events.NewMessage(func=lambda e: True))(source_channel_watcher)
-
     async def process_and_send(trigger_message, msg_id):
         try:
             source_id = kernel.config.get('sourcetrigger_channel_id')
@@ -298,33 +297,18 @@ def register(kernel):
             source_msg = await client.get_messages(source_id, ids=msg_id)
             if not source_msg:
                 return
-
-            caption = source_msg.text or ""
-            if caption:
-                first_line = caption.split('\n', 1)[0].strip()
-                if re.match(r"^~{1,3}", first_line):
-                    lines = caption.split('\n')
-                    caption = '\n'.join(lines[1:]).strip()
-
             reply_to_id = trigger_message.reply_to_msg_id if trigger_message.is_reply else None
 
-            if source_msg.media:
-                await client.send_file(
-                    trigger_message.chat_id,
-                    source_msg,
-                    caption=caption or None,
-                    reply_to=reply_to_id,
-                    parse_mode='html'
-                )
-            elif caption:
-                await client.send_message(
-                    trigger_message.chat_id,
-                    caption,
-                    parse_mode='html',
-                    reply_to=reply_to_id
-                )
+            await client.send_message(
+                trigger_message.chat_id,
+                source_msg,
+                reply_to=reply_to_id
+            )
+
+            logger.debug(f"message {msg_id} forwarded to {trigger_message.chat_id}")
+
         except Exception as e:
-            logger.error(f"send error for {msg_id}: {e}")
+            logger.error(f"forward error for {msg_id}: {e}")
 
     async def trigger_watcher(event):
         try:
