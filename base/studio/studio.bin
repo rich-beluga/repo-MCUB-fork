@@ -48,7 +48,7 @@ async def run(shell, args) -> None:
 
     try:
         # Import lazily so curses is not imported at shell startup
-        from ..studio.tui import Studio
+        from ..packages.studio.src.tui import Studio
     except ImportError as e:
         shell.output(f"\033[91mCould not import Studio: {e}\033[0m")
         return
