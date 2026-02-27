@@ -32,7 +32,24 @@ async def run(shell, args):
         qr.add_data(text)
         qr.make(fit=True)
         img = qr.make_image()
-        shell.output("\033[92m" + img.to_string() + "\033[0m")
+        
+        width = img.width
+        height = img.height
+        pixels = img.load()
+        
+        out_lines = []
+        for y in range(height):
+            line = ""
+            for x in range(width):
+                px = pixels[x, y]
+                if isinstance(px, tuple):
+                    val = px[0]
+                else:
+                    val = px
+                line += "\033[92m  \033[0m" if val < 128 else "  "
+            out_lines.append(line)
+        
+        shell.output("\n" + "\n".join(out_lines))
     except ImportError:
         if shutil.which("qrencode"):
             proc = await asyncio.create_subprocess_exec(
