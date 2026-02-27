@@ -189,32 +189,40 @@ def get_chat_id(event):
 
 async def init_db(kernel):
     """Инициализация таблиц БД"""
-    await kernel.db.execute("""
-        CREATE TABLE IF NOT EXISTS gemini_data (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
-    await kernel.db.commit()
+    if kernel.db_conn:
+        await kernel.db_conn.execute("""
+            CREATE TABLE IF NOT EXISTS gemini_data (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        await kernel.db_conn.commit()
 
 async def db_get(kernel, key, default=None):
     """Получение данных из БД"""
-    row = await kernel.db.fetchone("SELECT value FROM gemini_data WHERE key = ?", (key,))
+    row = None
+    if kernel.db_conn:
+        cursor = await kernel.db_conn.execute(
+            "SELECT value FROM gemini_data WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
     if row:
         try:
-            return json.loads(row['value'])
+            value = row[0] if isinstance(row, tuple) else row["value"]
+            return json.loads(value)
         except:
-            return row['value']
+            return row[0] if isinstance(row, tuple) else row["value"]
     return default
 
 async def db_set(kernel, key, value):
     """Сохранение данных в БД"""
     json_value = json.dumps(value) if not isinstance(value, str) else value
-    await kernel.db.execute(
-        "INSERT OR REPLACE INTO gemini_data (key, value) VALUES (?, ?)",
-        (key, json_value)
-    )
-    await kernel.db.commit()
+    if kernel.db_conn:
+        await kernel.db_conn.execute(
+            "INSERT OR REPLACE INTO gemini_data (key, value) VALUES (?, ?)",
+            (key, json_value)
+        )
+        await kernel.db_conn.commit()
 
 async def _prepare_parts(kernel, message: Message, custom_text: str = None):
     """Подготовка частей для отправки в Gemini"""
