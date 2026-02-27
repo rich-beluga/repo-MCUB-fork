@@ -1,11 +1,8 @@
 # Restart the shell.
 
-import os
-import signal
-
 DESCRIPTION = "Restart the shell."
 
 
 async def run(shell, args):
     shell.output("\033[93mRestarting shell...\033[0m")
-    os.kill(os.getpid(), signal.SIGTERM)
+    shell.restart()
