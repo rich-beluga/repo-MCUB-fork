@@ -1,6 +1,5 @@
 # Display IP address and geolocation info.
 
-import json
 import aiohttp
 
 DESCRIPTION = "Display public IP and geolocation info."
@@ -14,7 +13,7 @@ async def run(shell, args):
     shell.output(f"\n\033[96m\033[1mIP Information\033[0m\n")
     
     try:
-        async with shell.spinner("Fetching IP info..."):
+        with shell.spinner("Fetching IP info..."):
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     data = await resp.json()
