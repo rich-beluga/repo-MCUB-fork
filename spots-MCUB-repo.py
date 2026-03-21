@@ -1040,7 +1040,7 @@ def register(kernel):
                 f"<b>{CUSTOM_EMOJI['headphone']} {track_name} - <code>{artist_name}</code>\n"
                 f"<b>{CUSTOM_EMOJI['cd']} Album:</b> <code>{album_name}</code>\n\n"
                 f"<b>🎧 Device:</b> <code>{device_name}</code>\n"
-                + (("<b>{CUSTOM_EMOJI['heart']} From favorite tracks</b>\n" if "playlist/collection" in playlist_url else
+                + ((f"<b>{CUSTOM_EMOJI['heart']} From favorite tracks</b>\n" if "playlist/collection" in playlist_url else
                     f"<b>{CUSTOM_EMOJI['list']} From Playlist:</b> <a href='{playlist_url}'>View</a>\n") if playlist else "")
                 + f"\n<b>{CUSTOM_EMOJI['chain']} Track URL:</b> <a href='{track_url}'>Open in Spotify</a>"
             )
@@ -1065,22 +1065,21 @@ def register(kernel):
                         art_path = os.path.join(temp_dir, "cover.jpg")
                         with open(art_path, "wb") as f:
                             f.write(await response.read())
-
-            await client.send_file(
-                event.chat_id,
-                audio_path,
-                parse_mode='html',
-                caption=track_info,
-                attributes=[
-                    types.DocumentAttributeAudio(
-                        duration=duration_ms//1000,
-                        title=track_name,
-                        performer=artist_name
-                    )
-                ],
-                thumb=art_path,
-                reply_to=event.reply_to_msg_id if event.is_reply else None
-            )
+                await client.send_file(
+                    event.chat_id,
+                    audio_path,
+                    parse_mode='html',
+                    caption=track_info,
+                    attributes=[
+                        types.DocumentAttributeAudio(
+                            duration=duration_ms//1000,
+                            title=track_name,
+                            performer=artist_name
+                        )
+                    ],
+                    thumb=art_path,
+                    reply_to=event.reply_to_msg_id if event.is_reply else None
+                )
             await event.delete()
         except spotipy.oauth2.SpotifyOauthError as e:
             await event.edit(f"{CUSTOM_EMOJI['error']} <b>Ошибка авторизации:</b> <code>{str(e)}</code>", parse_mode='html')

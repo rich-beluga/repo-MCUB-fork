@@ -22,6 +22,7 @@ def register(kernel):
         def __init__(self):
             self.token = None
             self.uid = None
+            self.sync_task = None
             self.ssl = ssl.create_default_context()
             self.ssl.check_hostname = False
             self.ssl.verify_mode = ssl.CERT_NONE
@@ -112,7 +113,8 @@ def register(kernel):
                     except Exception as e:
                         kernel.log_error(f"Failed to get FHeta token: {e}")
 
-            asyncio.create_task(self._sync_loop())
+            if self.token and (self.sync_task is None or self.sync_task.done()):
+                self.sync_task = asyncio.create_task(self._sync_loop())
 
         def _(self, key, **kwargs):
             """Helper function to get localized string"""
@@ -128,6 +130,9 @@ def register(kernel):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 while True:
                     try:
+                        if not self.token:
+                            await asyncio.sleep(10)
+                            continue
                         if self.config.get('tracking', True):
                             async with session.post(
                                 "https://api.fixyres.com/dataset",

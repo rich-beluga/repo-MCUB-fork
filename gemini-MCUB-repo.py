@@ -785,8 +785,6 @@ def register(kernel):
         kernel.logger.error("Gemini: 'google-genai' library missing! pip install google-genai")
         return
 
-    asyncio.create_task(init_db(kernel))
-
     async def init_module_state():
         module_state['me'] = await kernel.client.get_me()
 
@@ -799,7 +797,11 @@ def register(kernel):
         module_state['profiles'] = await db_get(kernel, "gemini_profiles", {})
         module_state['knowledge_base'] = await db_get(kernel, "gemini_kb", [])
 
-    asyncio.create_task(init_module_state())
+    async def startup():
+        await init_db(kernel)
+        await init_module_state()
+
+    asyncio.create_task(startup())
 
     if "gemini_api_key" not in kernel.config:
         kernel.config["gemini_api_key"] = ""
@@ -1587,4 +1589,3 @@ def register(kernel):
             async with kernel.client.action(cid, "typing"):
                 await asyncio.sleep(min(25.0, max(1.5, len(cln) * random.uniform(0.1, 0.25))))
             await event.reply(cln)
-
