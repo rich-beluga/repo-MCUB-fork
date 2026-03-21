@@ -194,7 +194,8 @@ def register(kernel):
         except Exception as e:
             return None, str(e)
 
-    @kernel.register.command("ytm", alias=["ytmusic", "ytplay"])  # <url|query> - download audio from YouTube/YouTube Music
+    @kernel.register.command("ytm", alias=["ytmusic", "ytplay"])
+    # <url|query> - download audio from YouTube/YouTube Music
     async def ytm_handler(event):
         try:
             raw = get_args_raw(event)
@@ -255,7 +256,8 @@ def register(kernel):
             except Exception:
                 pass
 
-    @kernel.register.command("ytmauth")  # <path> - set path to YouTube Music headers_auth.json
+    @kernel.register.command("ytmauth")
+    # <path> - set path to YouTube Music headers_auth.json
     async def ytmauth_handler(event):
         raw = (get_args_raw(event) or "").strip()
         if not raw:
@@ -269,7 +271,8 @@ def register(kernel):
             kernel.save_config()
         await event.edit(s["auth_saved"].format(path=raw), parse_mode="html")
 
-    @kernel.register.command("ytnow", alias=["ytnowbeta"])  # beta now playing via YouTube Music account history
+    @kernel.register.command("ytnow", alias=["ytnowbeta"])
+    # beta now playing via YouTube Music account history
     async def ytnow_handler(event):
         try:
             item, error = await get_now_playing()
@@ -297,7 +300,8 @@ def register(kernel):
             await kernel.handle_error(e, source="ytm_beta:ytnow_handler", event=event)
             await event.edit(f"{EMOJI['error']} <b>{escape_html(str(e)[:300])}</b>", parse_mode="html")
 
-    @kernel.register.command("ytnowdl", alias=["ytmdl"])  # download the latest track from beta now playing
+    @kernel.register.command("ytnowdl", alias=["ytmdl"])
+    # download the latest track from beta now playing
     async def ytnowdl_handler(event):
         try:
             item, error = await get_now_playing()
