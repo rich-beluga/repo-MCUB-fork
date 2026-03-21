@@ -63,6 +63,9 @@ def register(kernel):
             )
         
         except Exception as e:
-            await loading_msg.edit(current_strings['error'])
+            try:
+                await loading_msg.edit(current_strings['error'])
+            except Exception:
+                await kernel.client.send_message(event.chat_id, current_strings['error'], reply_to=event.reply_to_msg_id)
             await kernel.handle_error(e, source="rapic_cmd", event=event)
             await asyncio.sleep(5)

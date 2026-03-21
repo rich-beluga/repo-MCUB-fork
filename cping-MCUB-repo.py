@@ -57,6 +57,11 @@ def register(kernel):
 
     async def callback_cping(event):
         ping_result = await ping_api_telegram()
+        buttons = [
+            [
+                Button.inline("Повторить", b"cping")
+            ]
+        ]
 
         if isinstance(ping_result, (int, float)):
             ping_text = f"<b>📶 Пинг до Telegram API:</b> <code>{ping_result}</code> мс"
@@ -64,10 +69,5 @@ def register(kernel):
             ping_text = f"<b>❌ Ошибка:</b> {ping_result}"
 
         await event.edit(ping_text, buttons=buttons, parse_mode='html')
-        buttons = [
-            [
-                Button.inline("Повторить", b"cping")
-            ]
-        ]
 
     kernel.register_callback_handler("cping", callback_cping)

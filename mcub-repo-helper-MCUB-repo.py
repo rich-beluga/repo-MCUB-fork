@@ -219,7 +219,6 @@ def register(kernel):
 
             if not module_name:
                 module_name = os.path.splitext(os.path.basename(file_name))[0]
-                module_name = re.sub(r'-MCUB-repo$', '', module_name)
 
             await event.edit("📥 Скачиваю файл...")
 
@@ -297,4 +296,3 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="mru_setup_command", event=event)
             await event.edit("❌ Ошибка при сохранении настроек")
-
