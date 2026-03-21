@@ -87,6 +87,6 @@ def register(kernel):
 
         except Exception as e:
             await event.edit("<i>❌ Ошибка, смотри логи</i>", parse_mode='html')
-            await log_error_to_bot(f"❌ {module_name}: {str(e)}")
+            await kernel.handle_error(e, source='html_code:html_code_handler', event=event)
 
     kernel.cprint(f'{kernel.Colors.GREEN}✅ Модуль html_code обновлён{kernel.Colors.RESET}')

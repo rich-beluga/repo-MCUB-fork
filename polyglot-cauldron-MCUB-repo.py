@@ -116,7 +116,7 @@ def register(kernel):
             f'<pre>{escape_html(out[:2000])}</pre>'
         )
 
-    @kernel.register.command('polybrew', alias=['poly', 'cauldron'])
+    @kernel.register.command('polybrew', alias=['poly', 'cauldron'])  # <code> | mode <lang> | run <lang> <code> - multi-language runner for 10 languages
     async def polybrew_handler(event):
         try:
             raw = get_args_raw(event)

@@ -43,7 +43,7 @@ def register(kernel):
         if not uinp:
             get = await event.get_reply_message()
             if not get:
-                uinp = '`1234567890-=\][poiuytrewqasdfghjkl;\'\n/.,mnbvcxz '
+                uinp = "`1234567890-=\\][poiuytrewqasdfghjkl;'\n/.,mnbvcxz "
             else:
                 uinp = get_args_raw(event)
         else:
@@ -51,7 +51,7 @@ def register(kernel):
 
         text = uinp.lower().strip()
         if len(text) == 0:
-            text = '`1234567890-=\][poiuytrewqasdfghjkl;\'\n/.,mnbvcxz '
+            text = "`1234567890-=\\][poiuytrewqasdfghjkl;'\n/.,mnbvcxz "
         await event.edit(' '.join([f'<code>{typing}</code>' for typing in 'Печатаю...']), parse_mode='html')
         keys = {'`': (38, 16), '~': (38, 16), 'ё': (38, 16), '1': (228, 16), '!': (228, 16), '2': (417, 16),
                 '@': (417, 16), '3': (606, 16), '#': (606, 16), '№': (606, 16), '4': (795, 16), ';': (2094, 404),
