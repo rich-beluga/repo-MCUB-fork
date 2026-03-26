@@ -6,7 +6,7 @@
 # -------------------- Meta data ---------------------------
 # requires: 
 # author: @Fixyres && @Hairpin00
-# version: 1.4.0
+# version: 1.4.5
 # description: Fheta for MCUB! / Фхета в MCUB! @FHeta_Updates
 # scop: kernel min v1.0.2.1
 # banner_url: https://github.com/Fixyres/FModules/blob/main/assets/FHeta/logo.png?raw=true
