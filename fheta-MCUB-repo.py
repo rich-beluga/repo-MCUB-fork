@@ -231,7 +231,9 @@ def register(kernel):
                         regular_cmds.append(f"<code>.{cmd_name}</code> {cmd_desc}")
 
                 if regular_cmds:
+                    info += '<blockquote>'
                     info += f"\n{self._get_emoji('command')} <b>{self._('commands_label')}</b>\n" + "\n".join(regular_cmds)
+                    info += '</blockquote>'
 
             return info
 
