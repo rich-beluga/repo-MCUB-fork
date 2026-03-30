@@ -150,7 +150,7 @@ def register(kernel):
                             self.token = resp.text.strip()
                             await kernel.db_set("FHeta", "token", self.token)
                     except Exception as e:
-                        kernel.log_error(f"Failed to get FHeta token: {e}")
+                        kernel.logger.error(f"Failed to get FHeta token: {e}")
 
             if self.token and (self.sync_task is None or self.sync_task.done()):
                 self.sync_task = asyncio.create_task(self._sync_loop())
@@ -172,7 +172,7 @@ def register(kernel):
                         if not self.token:
                             await asyncio.sleep(10)
                             continue
-                        if self.config.get("tracking", True):
+                        if self.config.get("tracking", True) is not False:
                             async with session.post(
                                 "https://api.fixyres.com/dataset",
                                 params={
@@ -199,7 +199,7 @@ def register(kernel):
                     await asyncio.sleep(10)
 
         def _get_emoji(self, key):
-            theme = self.config.get("theme", "default")
+            theme = self.config.get("theme") or "default"
             return self.THEMES.get(theme, self.THEMES["default"]).get(key, "")
 
         def _escape_html(self, text):
@@ -485,7 +485,7 @@ def register(kernel):
             inline="true",
             token=fheta.token,
             user_id=fheta.uid,
-            ood=str(fheta.config.get("only_official_developers", False)).lower(),
+            ood=str(fheta.config.get("only_official_developers") or False).lower(),
         )
 
         if not mods or not isinstance(mods, list):
