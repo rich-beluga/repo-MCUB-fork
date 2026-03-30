@@ -219,7 +219,7 @@ def register(kernel):
                             return await response.json()
                         return {}
             except Exception as e:
-                kernel.log_error(f"API GET error: {e}")
+                kernel.logger.error(f"API GET error: {e}")
                 return {}
 
         async def _api_post(self, endpoint, json_data=None, **params):
@@ -237,7 +237,7 @@ def register(kernel):
                             return await response.json()
                         return {}
             except Exception as e:
-                kernel.log_error(f"API POST error: {e}")
+                kernel.logger.error(f"API POST error: {e}")
                 return {}
 
         def _fmt_mod(self, mod, query="", idx=1, total=1, inline=False):
