@@ -1,5 +1,5 @@
 # meta: requires: telethon>=1.24.0
-# meta: author: @hikarimods, @Hairpin00
+# meta: author: @hikarimods
 # meta: version: 2.1.0
 # meta: description: Mutes tags and logs them
 
@@ -10,8 +10,11 @@ import html
 from telethon.tl.functions.contacts import GetBlockedRequest
 from telethon.tl.types import Channel, Message
 from core.lib.loader.module_config import (
-    ModuleConfig, ConfigValue,
-    Boolean, String, Secret
+    ModuleConfig,
+    ConfigValue,
+    Boolean,
+    String,
+    Secret,
 )
 
 
@@ -20,18 +23,78 @@ def register(kernel):
     prefix = kernel.custom_prefix
 
     config = ModuleConfig(
-        ConfigValue("stags_enabled",  False, description="Enable silent tags",           validator=Boolean(default=False)),
-        ConfigValue("silent",         False, description="Don't reply in chat on tag",   validator=Boolean(default=False)),
-        ConfigValue("ignore_bots",    False, description="Ignore bots",                  validator=Boolean(default=False)),
-        ConfigValue("ignore_blocked", False, description="Ignore blocked users",         validator=Boolean(default=False)),
-        ConfigValue("silent_bots",    False, description="Don't log bot tags",           validator=Boolean(default=False)),
-        ConfigValue("silent_blocked", False, description="Don't log blocked user tags",  validator=Boolean(default=False)),
-        ConfigValue("use_whitelist",  False, description="Treat user/chat lists as whitelist", validator=Boolean(default=False)),
-        ConfigValue("ignore_users",  "[]",  description="JSON list of ignored user IDs", validator=String(default="[]")),
-        ConfigValue("ignore_chats",  "[]",  description="JSON list of ignored chat IDs", validator=String(default="[]")),
-        ConfigValue("silent_users",  "[]",  description="JSON list of silent user IDs",  validator=String(default="[]")),
-        ConfigValue("silent_chats",  "[]",  description="JSON list of silent chat IDs",  validator=String(default="[]")),
-        ConfigValue("log_chat_id",   "me",  description="Chat ID to log tags to",        validator=String(default="me")),
+        ConfigValue(
+            "stags_enabled",
+            False,
+            description="Enable silent tags",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "silent",
+            False,
+            description="Don't reply in chat on tag",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "ignore_bots",
+            False,
+            description="Ignore bots",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "ignore_blocked",
+            False,
+            description="Ignore blocked users",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "silent_bots",
+            False,
+            description="Don't log bot tags",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "silent_blocked",
+            False,
+            description="Don't log blocked user tags",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "use_whitelist",
+            False,
+            description="Treat user/chat lists as whitelist",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "ignore_users",
+            "[]",
+            description="JSON list of ignored user IDs",
+            validator=String(default="[]"),
+        ),
+        ConfigValue(
+            "ignore_chats",
+            "[]",
+            description="JSON list of ignored chat IDs",
+            validator=String(default="[]"),
+        ),
+        ConfigValue(
+            "silent_users",
+            "[]",
+            description="JSON list of silent user IDs",
+            validator=String(default="[]"),
+        ),
+        ConfigValue(
+            "silent_chats",
+            "[]",
+            description="JSON list of silent chat IDs",
+            validator=String(default="[]"),
+        ),
+        ConfigValue(
+            "log_chat_id",
+            "me",
+            description="Chat ID to log tags to",
+            validator=String(default="me"),
+        ),
     )
 
     def get_config():
@@ -47,20 +110,23 @@ def register(kernel):
             return []
 
     async def _load_config():
-        config_dict = await kernel.get_module_config(__name__, {
-            "stags_enabled":  False,
-            "silent":         False,
-            "ignore_bots":    False,
-            "ignore_blocked": False,
-            "silent_bots":    False,
-            "silent_blocked": False,
-            "use_whitelist":  False,
-            "ignore_users":  "[]",
-            "ignore_chats":  "[]",
-            "silent_users":  "[]",
-            "silent_chats":  "[]",
-            "log_chat_id":   "me",
-        })
+        config_dict = await kernel.get_module_config(
+            __name__,
+            {
+                "stags_enabled": False,
+                "silent": False,
+                "ignore_bots": False,
+                "ignore_blocked": False,
+                "silent_bots": False,
+                "silent_blocked": False,
+                "use_whitelist": False,
+                "ignore_users": "[]",
+                "ignore_chats": "[]",
+                "silent_users": "[]",
+                "silent_chats": "[]",
+                "log_chat_id": "me",
+            },
+        )
         config.from_dict(config_dict)
         await kernel.save_module_config(__name__, config.to_dict())
         kernel.store_module_config_schema(__name__, config)
@@ -128,7 +194,7 @@ def register(kernel):
             await kernel.handle_error(e, source="silent_tags:stagscmd", event=event)
             await event.edit("Error, check logs", parse_mode="html")
 
-    @kernel.register.watcher('newmessage', incoming=True)
+    @kernel.register.watcher("newmessage", incoming=True)
     async def message_watcher(event):
         try:
             if not hasattr(event.message, "mentioned") or not event.message.mentioned:
@@ -139,9 +205,12 @@ def register(kernel):
             if not cfg["stags_enabled"]:
                 return
 
-            log_chat_id = cfg["log_chat_id"]
-            if event.chat_id == log_chat_id:
-                return
+            raw_log_chat_id = cfg["log_chat_id"]
+            try:
+                log_chat_id = int(raw_log_chat_id)
+            except (ValueError, TypeError):
+                log_chat_id = raw_log_chat_id
+
 
             sender_id = event.sender_id
 
