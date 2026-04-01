@@ -1,16 +1,23 @@
 import asyncio
-import contextlib
 import datetime
+import json
 import logging
 import re
 import time
-from typing import Union
-from telethon import events, Button
-from telethon.tl.types import User, Channel, PeerUser, MessageEntityCustomEmoji
+from telethon import Button
+from telethon.tl.types import User, Channel, PeerUser
 from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
 from telethon.tl.functions.messages import ReportSpamRequest, DeleteHistoryRequest
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.users import GetFullUserRequest
+
+from core.lib.loader.module_config import (
+    ModuleConfig,
+    ConfigValue,
+    Boolean,
+    Integer,
+    String,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,30 +39,118 @@ def register(kernel):
     client = kernel.client
     prefix = kernel.custom_prefix
 
-    kernel.config.setdefault("dnd_pmbl_active", True)
-    kernel.config.setdefault("dnd_active_threshold", 5)
-    kernel.config.setdefault("dnd_afk_gone_time", True)
-    kernel.config.setdefault("dnd_afk_group_list", [])
-    kernel.config.setdefault("dnd_afk_show_duration", True)
-    kernel.config.setdefault("dnd_afk_tag_whitelist", True)
-    kernel.config.setdefault("dnd_custom_message", "")
-    kernel.config.setdefault("dnd_delete_dialog", False)
-    kernel.config.setdefault("dnd_ignore_active", True)
-    kernel.config.setdefault("dnd_ignore_contacts", True)
-    kernel.config.setdefault(
-        "dnd_photo", "https://github.com/hikariatama/assets/raw/master/unit_sigma.png"
+    config = ModuleConfig(
+        ConfigValue(
+            "dnd_pmbl_active", True, description="Enable PM block", validator=Boolean()
+        ),
+        ConfigValue(
+            "dnd_active_threshold",
+            5,
+            description="Messages threshold",
+            validator=Integer(),
+        ),
+        ConfigValue(
+            "dnd_afk_gone_time", True, description="Show gone time", validator=Boolean()
+        ),
+        ConfigValue(
+            "dnd_afk_group_list",
+            [],
+            description="AFK group whitelist",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "dnd_afk_show_duration",
+            True,
+            description="Show status duration",
+            validator=Boolean(),
+        ),
+        ConfigValue(
+            "dnd_afk_tag_whitelist",
+            True,
+            description="Tag whitelist mode",
+            validator=Boolean(),
+        ),
+        ConfigValue(
+            "dnd_custom_message",
+            "",
+            description="Custom PM block message",
+            validator=String(),
+        ),
+        ConfigValue(
+            "dnd_delete_dialog", False, description="Delete dialog", validator=Boolean()
+        ),
+        ConfigValue(
+            "dnd_ignore_active",
+            True,
+            description="Ignore active chats",
+            validator=Boolean(),
+        ),
+        ConfigValue(
+            "dnd_ignore_contacts",
+            True,
+            description="Ignore contacts",
+            validator=Boolean(),
+        ),
+        ConfigValue(
+            "dnd_photo",
+            "https://github.com/hikariatama/assets/raw/master/unit_sigma.png",
+            description="Photo URL",
+            validator=String(),
+        ),
+        ConfigValue(
+            "dnd_report_spam", False, description="Report as spam", validator=Boolean()
+        ),
+        ConfigValue(
+            "dnd_use_bio", True, description="Use bio for status", validator=Boolean()
+        ),
+        ConfigValue(
+            "dnd_whitelist", [], description="Whitelist", validator=String(default="")
+        ),
+        ConfigValue(
+            "dnd_ignore_hello",
+            False,
+            description="Show hello message",
+            validator=Boolean(),
+        ),
+        ConfigValue(
+            "dnd_status", False, description="Current status", validator=String()
+        ),
+        ConfigValue(
+            "dnd_status_duration", 0, description="Status duration", validator=Integer()
+        ),
+        ConfigValue("dnd_gone", 0, description="Gone timestamp", validator=Integer()),
+        ConfigValue("dnd_further", "", description="Further info", validator=String()),
+        ConfigValue("dnd_old_bio", "", description="Old bio", validator=String()),
+        ConfigValue(
+            "dnd_texts", {}, description="Status texts", validator=String(default="")
+        ),
+        ConfigValue(
+            "dnd_notif", {}, description="Notifications", validator=String(default="")
+        ),
     )
-    kernel.config.setdefault("dnd_report_spam", False)
-    kernel.config.setdefault("dnd_use_bio", True)
-    kernel.config.setdefault("dnd_whitelist", [])
-    kernel.config.setdefault("dnd_ignore_hello", False)
-    kernel.config.setdefault("dnd_status", False)
-    kernel.config.setdefault("dnd_status_duration", 0)
-    kernel.config.setdefault("dnd_gone", 0)
-    kernel.config.setdefault("dnd_further", "")
-    kernel.config.setdefault("dnd_old_bio", "")
-    kernel.config.setdefault("dnd_texts", {})
-    kernel.config.setdefault("dnd_notif", {})
+
+    async def _load_config():
+        cfg = await kernel.get_module_config(__name__, config.to_dict())
+        config.from_dict(cfg)
+        await kernel.save_module_config(__name__, config.to_dict())
+        kernel.store_module_config_schema(__name__, config)
+
+    asyncio.create_task(_load_config())
+
+    def get_config():
+        live = getattr(kernel, "_live_module_configs", {}).get(__name__)
+        return live if live else config
+
+    def get_json(key, default=None):
+        val = get_config().get(key)
+        if val is None:
+            return default
+        if isinstance(val, (list, dict)):
+            return val
+        try:
+            return json.loads(val) if isinstance(val, str) else default
+        except (json.JSONDecodeError, TypeError):
+            return default
 
     module_temp_data = {
         "ratelimit_afk": [],
@@ -138,19 +233,19 @@ def register(kernel):
         return 0
 
     def _approve(user_id, reason="unknown"):
-        whitelist = kernel.config.get("dnd_whitelist", [])
+        whitelist = get_json("dnd_whitelist", [])
         if user_id not in whitelist:
             whitelist.append(user_id)
-            kernel.config["dnd_whitelist"] = whitelist
+            get_config()["dnd_whitelist"] = whitelist
             kernel.cprint(
                 f"User {user_id} approved in pm, reason: {reason}", kernel.Colors.GREEN
             )
 
     def _unapprove(user_id):
-        whitelist = kernel.config.get("dnd_whitelist", [])
+        whitelist = get_json("dnd_whitelist", [])
         if user_id in whitelist:
             whitelist.remove(user_id)
-            kernel.config["dnd_whitelist"] = whitelist
+            get_config()["dnd_whitelist"] = whitelist
             kernel.cprint(f"User {user_id} unapproved in pm", kernel.Colors.YELLOW)
 
     async def _send_log_message(text, buttons=None):
@@ -171,14 +266,14 @@ def register(kernel):
         message, peer, contact, started_by_you, active_peer, self_id
     ):
         if len(module_temp_data["ratelimit_pmbl"]) < 10:
-            caption = kernel.config.get("dnd_custom_message") or (
+            caption = get_config().get("dnd_custom_message") or (
                 "😊 <b>Hey there •ᴗ•</b>\n<b>i am Unit «SIGMA»<b>, the "
                 "<b>guardian</b> of this account. You are <b>not approved</b>! You "
                 "can contact my owner <b>in a groupchat</b>, if you need "
                 "help.\n<b>I need to ban you in terms of security.</b>"
             )
 
-            photo_url = kernel.config.get("dnd_photo")
+            photo_url = get_config().get("dnd_photo")
             sent = False
             if photo_url:
                 try:
@@ -190,7 +285,9 @@ def register(kernel):
                     )
                     sent = True
                 except Exception as e:
-                    logger.warning(f"send_file failed ({e}), falling back to text message")
+                    logger.warning(
+                        f"send_file failed ({e}), falling back to text message"
+                    )
 
             if not sent:
                 try:
@@ -212,8 +309,8 @@ def register(kernel):
                 f"<b>{format_state(started_by_you)} Started by you</b>\n"
                 f"<b>{format_state(active_peer)} Active conversation</b>\n\n"
                 f"<b>{CUSTOM_EMOJI['fist']} Actions</b>\n\n"
-                f"<b>{format_state(kernel.config.get('dnd_report_spam'))} Reported spam</b>\n"
-                f"<b>{format_state(kernel.config.get('dnd_delete_dialog'))} Deleted dialog</b>\n"
+                f"<b>{format_state(get_config().get('dnd_report_spam'))} Reported spam</b>\n"
+                f"<b>{format_state(get_config().get('dnd_delete_dialog'))} Deleted dialog</b>\n"
                 f"<b>{format_state(True)} Blocked</b>\n\n"
                 f"<b>{CUSTOM_EMOJI['info']} Message</b>\n"
                 f"<code>{raw_text(message)[:3000]}</code>"
@@ -230,36 +327,36 @@ def register(kernel):
             await _send_log_message(banned_log, buttons=log_buttons)
 
     async def _active_peer(cid, peer):
-        if kernel.config.get("dnd_ignore_active"):
+        if get_config().get("dnd_ignore_active"):
             q = 0
             async for msg in client.iter_messages(peer, limit=200):
                 me = await client.get_me()
                 if msg.sender_id == me.id:
                     q += 1
-                if q >= kernel.config.get("dnd_active_threshold"):
+                if q >= get_config().get("dnd_active_threshold"):
                     _approve(cid, "active_threshold")
                     return True
         return False
 
     async def _punish_handler(cid):
         await client(BlockRequest(id=cid))
-        if kernel.config.get("dnd_report_spam"):
+        if get_config().get("dnd_report_spam"):
             await client(ReportSpamRequest(peer=cid))
-        if kernel.config.get("dnd_delete_dialog"):
+        if get_config().get("dnd_delete_dialog"):
             await client(DeleteHistoryRequest(peer=cid, just_clear=True, max_id=0))
 
     async def _unstatus_func(delay=None):
         if delay:
             await asyncio.sleep(delay)
 
-        kernel.config["dnd_status"] = False
-        kernel.config["dnd_status_duration"] = 0
-        kernel.config["dnd_gone"] = 0
-        kernel.config["dnd_further"] = ""
+        get_config()["dnd_status"] = False
+        get_config()["dnd_status_duration"] = 0
+        get_config()["dnd_gone"] = 0
+        get_config()["dnd_further"] = ""
 
-        if kernel.config.get("dnd_old_bio"):
-            await client(UpdateProfileRequest(about=kernel.config["dnd_old_bio"]))
-            kernel.config["dnd_old_bio"] = ""
+        if get_config().get("dnd_old_bio"):
+            await client(UpdateProfileRequest(about=get_config()["dnd_old_bio"]))
+            get_config()["dnd_old_bio"] = ""
 
         for m in module_temp_data["sent_messages"]:
             try:
@@ -449,13 +546,13 @@ def register(kernel):
         name, notify, text = args
         notify_bool = notify in ["1", "true", "yes", "+"]
 
-        texts = kernel.config.get("dnd_texts", {})
+        texts = get_json("dnd_texts", {})
         texts[name] = text
-        kernel.config["dnd_texts"] = texts
+        get_config()["dnd_texts"] = texts
 
-        notifs = kernel.config.get("dnd_notif", {})
+        notifs = get_json("dnd_notif", {})
         notifs[name] = notify_bool
-        kernel.config["dnd_notif"] = notifs
+        get_config()["dnd_notif"] = notifs
 
         await event.edit(
             f"<b>{CUSTOM_EMOJI['check']} Статус {name} создан.</b>\n"
@@ -475,8 +572,8 @@ def register(kernel):
             return
 
         name = args[1]
-        texts = kernel.config.get("dnd_texts", {})
-        notifs = kernel.config.get("dnd_notif", {})
+        texts = get_json("dnd_texts", {})
+        notifs = get_json("dnd_notif", {})
 
         if name not in texts:
             await event.edit(
@@ -488,8 +585,8 @@ def register(kernel):
         if name in notifs:
             del notifs[name]
 
-        kernel.config["dnd_texts"] = texts
-        kernel.config["dnd_notif"] = notifs
+        get_config()["dnd_texts"] = texts
+        get_config()["dnd_notif"] = notifs
 
         await event.edit(
             f"<b>{CUSTOM_EMOJI['check']} Статус {name} удалён</b>", parse_mode="html"
@@ -497,8 +594,8 @@ def register(kernel):
 
     @kernel.register.command("statuses")
     async def statuses_cmd(event):
-        texts = kernel.config.get("dnd_texts", {})
-        notifs = kernel.config.get("dnd_notif", {})
+        texts = get_json("dnd_texts", {})
+        notifs = get_json("dnd_notif", {})
 
         if not texts:
             await event.edit(
@@ -525,7 +622,7 @@ def register(kernel):
             return
 
         name = args[0]
-        texts = kernel.config.get("dnd_texts", {})
+        texts = get_json("dnd_texts", {})
 
         if name not in texts:
             await event.edit(
@@ -549,17 +646,17 @@ def register(kernel):
             elif len(args) > 2 and duration:
                 further = args[2]
 
-        if kernel.config.get("dnd_status"):
+        if get_config().get("dnd_status"):
             await _unstatus_func()
 
-        if kernel.config.get("dnd_use_bio") and not kernel.config.get("dnd_old_bio"):
+        if get_config().get("dnd_use_bio") and not get_config().get("dnd_old_bio"):
             me = await client.get_me()
             full = await client(GetFullUserRequest(me))
-            kernel.config["dnd_old_bio"] = getattr(full.full_user, "about", "")
+            get_config()["dnd_old_bio"] = getattr(full.full_user, "about", "")
 
-        kernel.config["dnd_status"] = name
-        kernel.config["dnd_gone"] = time.time()
-        kernel.config["dnd_further"] = further
+        get_config()["dnd_status"] = name
+        get_config()["dnd_gone"] = time.time()
+        get_config()["dnd_further"] = further
 
         if duration:
             if module_temp_data["unstatus_task"]:
@@ -570,12 +667,12 @@ def register(kernel):
             module_temp_data["unstatus_task"] = asyncio.create_task(
                 _unstatus_func(duration)
             )
-            kernel.config["dnd_status_duration"] = time.time() + duration
+            get_config()["dnd_status_duration"] = time.time() + duration
 
         status_text = (
             f"<b>{CUSTOM_EMOJI['check']} Статус установлен</b>\n"
             f"<code>{texts[name]}</code>\n"
-            f"Уведомления: <code>{kernel.config.get('dnd_notif', {}).get(name, False)}</code>"
+            f"Уведомления: <code>{get_config().get('dnd_notif', {}).get(name, False)}</code>"
         )
 
         if further:
@@ -583,7 +680,7 @@ def register(kernel):
         if duration:
             status_text += f"\nПродолжительность: <code>{time_formatter(duration, short=True)}</code>"
 
-        if kernel.config.get("dnd_use_bio"):
+        if get_config().get("dnd_use_bio"):
             bio = texts[name]
             if further:
                 bio += f" | {further}"
@@ -595,7 +692,7 @@ def register(kernel):
 
     @kernel.register.command("unstatus")
     async def unstatus_cmd(event):
-        if not kernel.config.get("dnd_status"):
+        if not get_config().get("dnd_status"):
             await event.edit(
                 f"{CUSTOM_EMOJI['warning']} <b>Нет активного статуса</b>",
                 parse_mode="html",
@@ -615,6 +712,29 @@ def register(kernel):
         await asyncio.sleep(10)
         await msg.delete()
 
+    async def unblock_callback(event):
+        if not kernel.is_admin(event.sender_id):
+            await event.answer("❌ Только админ может разблокировать!", alert=True)
+            return
+
+        data = event.data.decode()
+        user_id = int(data.split("_")[-1])
+
+        try:
+            await client(UnblockRequest(id=user_id))
+            await event.edit(
+                f"{CUSTOM_EMOJI['check']} <b>Пользователь разблокирован!</b>",
+                parse_mode="html",
+                buttons=None,
+            )
+            await event.answer("✅ Пользователь разблокирован!")
+        except Exception as e:
+            kernel.log_error(f"Unblock failed: {e}")
+            await event.answer("❌ Ошибка разблокировки!", alert=True)
+
+    kernel.register_callback_handler("dnd_unblock_", unblock_callback)
+
+    @kernel.register.watcher()
     async def message_watcher(event):
         try:
             chat_id = event.chat_id
@@ -624,13 +744,12 @@ def register(kernel):
                 return
 
             if (
-                kernel.config.get("dnd_pmbl_active")
+                get_config().get("dnd_pmbl_active")
                 and isinstance(event.chat, User)
                 and not isinstance(event.chat, Channel)
             ):
-
                 cid = event.chat_id
-                whitelist = kernel.config.get("dnd_whitelist", [])
+                whitelist = get_json("dnd_whitelist", [])
 
                 if cid in whitelist:
                     return
@@ -640,7 +759,7 @@ def register(kernel):
                     _approve(cid, "bot")
                     return
 
-                if kernel.config.get("dnd_ignore_contacts") and sender.contact:
+                if get_config().get("dnd_ignore_contacts") and sender.contact:
                     _approve(cid, "ignore_contacts")
                     return
 
@@ -665,7 +784,7 @@ def register(kernel):
                 ]
 
                 contact = not (
-                    kernel.config.get("dnd_ignore_contacts") and sender.contact
+                    get_config().get("dnd_ignore_contacts") and sender.contact
                 )
                 started_by_you = False
 
@@ -676,18 +795,17 @@ def register(kernel):
                 _approve(cid, "blocked")
                 kernel.log_warning(f"Intruder punished: {cid}")
 
-            elif kernel.config.get("dnd_status") and (
+            elif get_config().get("dnd_status") and (
                 isinstance(event.chat, User)
                 or (
-                    kernel.config.get("dnd_afk_tag_whitelist")
-                    and chat_id in kernel.config.get("dnd_afk_group_list", [])
+                    get_config().get("dnd_afk_tag_whitelist")
+                    and chat_id in get_json("dnd_afk_group_list", [])
                 )
                 or (
-                    not kernel.config.get("dnd_afk_tag_whitelist")
-                    and chat_id not in kernel.config.get("dnd_afk_group_list", [])
+                    not get_config().get("dnd_afk_tag_whitelist")
+                    and chat_id not in get_config().get("dnd_afk_group_list", [])
                 )
             ):
-
                 if chat_id in module_temp_data["ratelimit_afk"]:
                     return
 
@@ -705,12 +823,12 @@ def register(kernel):
 
                 now = datetime.datetime.now().replace(microsecond=0)
                 gone = datetime.datetime.fromtimestamp(
-                    kernel.config.get("dnd_gone", 0)
+                    get_config().get("dnd_gone", 0)
                 ).replace(microsecond=0)
 
-                if kernel.config.get("dnd_status_duration"):
+                if get_config().get("dnd_status_duration"):
                     status_duration = datetime.datetime.fromtimestamp(
-                        kernel.config.get("dnd_status_duration")
+                        get_config().get("dnd_status_duration")
                     ).replace(microsecond=0)
                     if now > status_duration:
                         await _unstatus_func()
@@ -719,28 +837,28 @@ def register(kernel):
                 diff = now - gone
                 diff_sec = diff.total_seconds()
 
-                further = kernel.config.get("dnd_further", "")
-                status_name = kernel.config.get("dnd_status")
-                texts = kernel.config.get("dnd_texts", {})
+                further = get_config().get("dnd_further", "")
+                status_name = get_config().get("dnd_status")
+                texts = get_json("dnd_texts", {})
 
                 afk_string = f"{texts.get(status_name, '')}\n"
                 if further:
                     afk_string += f"\n<b><u>Подробнее:</u></b>\n<code>{further}</code>"
 
-                if kernel.config.get("dnd_afk_gone_time"):
+                if get_config().get("dnd_afk_gone_time"):
                     afk_string += f"\n<b><u>Отсутствую:</u></b>\n<code>{time_formatter(diff_sec, short=True)}</code>"
 
-                if kernel.config.get("dnd_status_duration") and kernel.config.get(
+                if get_config().get("dnd_status_duration") and get_config().get(
                     "dnd_afk_show_duration"
                 ):
-                    remaining = kernel.config.get("dnd_status_duration") - time.time()
+                    remaining = get_config().get("dnd_status_duration") - time.time()
                     if remaining > 0:
                         afk_string += f"\n<b><u>Буду AFK:</u></b>\n<code>{time_formatter(remaining, short=True)}</code>"
 
                 m = await event.reply(afk_string, parse_mode="html")
                 module_temp_data["sent_messages"].append(m)
 
-                if not kernel.config.get("dnd_notif", {}).get(status_name, False):
+                if not get_json("dnd_notif", {}).get(status_name, False):
                     await client.send_read_acknowledge(
                         event.chat_id, clear_mentions=True
                     )
@@ -748,35 +866,11 @@ def register(kernel):
                 module_temp_data["ratelimit_afk"].append(chat_id)
 
         except Exception as e:
-            await kernel.handle_error(e, source='dnd:message_watcher', event=event)
+            await kernel.handle_error(e, source="dnd:message_watcher", event=event)
             kernel.logger.error(f"Error in DND watcher: {e}")
 
-    async def unblock_callback(event):
-        if not kernel.is_admin(event.sender_id):
-            await event.answer("❌ Только админ может разблокировать!", alert=True)
-            return
-
-        data = event.data.decode()
-        user_id = int(data.split("_")[-1])
-
-        try:
-            await client(UnblockRequest(id=user_id))
-            await event.edit(
-                f"{CUSTOM_EMOJI['check']} <b>Пользователь разблокирован!</b>",
-                parse_mode="html",
-                buttons=None,
-            )
-            await event.answer("✅ Пользователь разблокирован!")
-        except Exception as e:
-            kernel.log_error(f"Unblock failed: {e}")
-            await event.answer("❌ Ошибка разблокировки!", alert=True)
-
-    kernel.register_callback_handler("dnd_unblock_", unblock_callback)
-
-    client.on(events.NewMessage())(message_watcher)
-
     async def startup_check():
-        if not kernel.config.get("dnd_ignore_hello"):
+        if not get_config().get("dnd_ignore_hello"):
             me = await client.get_me()
             hello_msg = (
                 f"{CUSTOM_EMOJI['lock']} <b>Unit «SIGMA»</b> защищает ваши личные сообщения "
@@ -794,6 +888,6 @@ def register(kernel):
             except:
                 await client.send_message(me.id, hello_msg, parse_mode="html")
 
-            kernel.config["dnd_ignore_hello"] = True
+            get_config()["dnd_ignore_hello"] = True
 
     asyncio.create_task(startup_check())
