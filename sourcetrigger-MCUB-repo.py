@@ -1,5 +1,5 @@
 # author: @YouRooni && @Hairpin00 && @kozhura_ubezhishe_player_fly
-# version: 1.1.0
+# version: 1.3.0
 # description: отправляет медиа или текст из канала в ответ на текстовые триггеры (пересылка)
 
 import logging
@@ -7,25 +7,66 @@ import re
 import asyncio
 import json
 import os
-from telethon.tl.types import MessageEntityTextUrl
-from telethon import events
+from core.lib.loader.module_config import ModuleConfig, ConfigValue, Boolean, String
 
 logger = logging.getLogger(__name__)
 
 TRIGGERS_FILE = "sourcetrigger_triggers.json"
 
+
 def register(kernel):
     client = kernel.client
 
-    kernel.config.setdefault('sourcetrigger_channel_id', None)
-    kernel.config.setdefault('sourcetrigger_auto_parse', True)
+    config = ModuleConfig(
+        ConfigValue(
+            "sourcetrigger_channel_id",
+            "",
+            description="Source channel ID (leave empty if not set)",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "sourcetrigger_auto_parse",
+            True,
+            description="Auto-parse triggers on startup",
+            validator=Boolean(default=True),
+        ),
+    )
+
+    def get_config():
+        """Always read live config to avoid stale cached values."""
+        live = getattr(kernel, "_live_module_configs", {}).get(__name__)
+        return live if live else config
+
+    def _get_channel_id():
+        """Return channel id as int or None."""
+        raw = get_config().get("sourcetrigger_channel_id", "")
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return raw  # keep as string/username
+
+    async def _load_config():
+        config_dict = await kernel.get_module_config(
+            __name__,
+            {
+                "sourcetrigger_channel_id": "",
+                "sourcetrigger_auto_parse": True,
+            },
+        )
+        config.from_dict(config_dict)
+        await kernel.save_module_config(__name__, config.to_dict())
+        kernel.store_module_config_schema(__name__, config)
+
+    asyncio.create_task(_load_config())
 
     triggers = {}
     BATCH_SIZE = 200
 
     def save_triggers():
         try:
-            with open(TRIGGERS_FILE, 'w', encoding='utf-8') as f:
+            with open(TRIGGERS_FILE, "w", encoding="utf-8") as f:
                 json.dump(triggers, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"failed to save triggers: {e}")
@@ -34,7 +75,7 @@ def register(kernel):
         nonlocal triggers
         try:
             if os.path.exists(TRIGGERS_FILE):
-                with open(TRIGGERS_FILE, 'r', encoding='utf-8') as f:
+                with open(TRIGGERS_FILE, "r", encoding="utf-8") as f:
                     triggers = json.load(f)
         except Exception as e:
             logger.error(f"failed to load triggers: {e}")
@@ -43,7 +84,7 @@ def register(kernel):
     load_triggers()
 
     async def process_message_for_triggers(msg):
-        if not msg or not getattr(msg, 'text', None):
+        if not msg or not getattr(msg, "text", None):
             return None
 
         trigger_def_msg = msg
@@ -57,7 +98,7 @@ def register(kernel):
                 return None
 
         text = trigger_def_msg.text.strip()
-        first_line = text.split('\n', 1)[0].strip()
+        first_line = text.split("\n", 1)[0].strip()
         ttype, trigger = None, None
 
         if re.match(r"^~{1,3}", first_line):
@@ -92,7 +133,9 @@ def register(kernel):
             return ttype, trigger, content_msg.id
         return None
 
-    async def process_batch(tasks, triggers_dict, counts_dict, status_msg, total_processed):
+    async def process_batch(
+        tasks, triggers_dict, counts_dict, status_msg, total_processed
+    ):
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception) or not result:
@@ -110,7 +153,9 @@ def register(kernel):
 
         if status_msg and total_processed % (BATCH_SIZE * 5) == 0:
             try:
-                await status_msg.edit(f"☄️ обработка... обработано {total_processed} сообщений")
+                await status_msg.edit(
+                    f"☄️ обработка... обработано {total_processed} сообщений"
+                )
             except Exception:
                 pass
 
@@ -128,10 +173,10 @@ def register(kernel):
                 "contains": 0,
                 "exact_delete": 0,
                 "regex": 0,
-                "regex_delete": 0
+                "regex_delete": 0,
             }
 
-            source_id = kernel.config.get('sourcetrigger_channel_id')
+            source_id = _get_channel_id()
             if not source_id:
                 if event:
                     await event.edit("❌ источник не настроен")
@@ -146,11 +191,15 @@ def register(kernel):
                     tasks.append(asyncio.create_task(process_message_for_triggers(msg)))
                     processed_count += 1
                     if len(tasks) >= BATCH_SIZE:
-                        await process_batch(tasks, triggers, counts, status_msg, processed_count)
+                        await process_batch(
+                            tasks, triggers, counts, status_msg, processed_count
+                        )
                         tasks.clear()
 
                 if tasks:
-                    await process_batch(tasks, triggers, counts, status_msg, processed_count)
+                    await process_batch(
+                        tasks, triggers, counts, status_msg, processed_count
+                    )
 
                 save_triggers()
 
@@ -161,7 +210,8 @@ def register(kernel):
                         f"по вхождению: {counts['contains']}\n"
                         f"точных+удалить: {counts['exact_delete']}\n"
                         f"regex: {counts['regex']}\n"
-                        f"regex+удалить: {counts['regex_delete']}</blockquote>", parse_mode='html'
+                        f"regex+удалить: {counts['regex_delete']}</blockquote>",
+                        parse_mode="html",
                     )
 
             except Exception as e:
@@ -171,14 +221,15 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="run_parser", event=event)
 
-    if kernel.config.get('sourcetrigger_auto_parse'):
-        async def auto_parse_startup():
-            await asyncio.sleep(5)
+    async def _auto_parse_startup():
+        await asyncio.sleep(5)
+        # read live config after startup loaded it
+        if get_config()["sourcetrigger_auto_parse"]:
             await run_parser()
 
-        asyncio.create_task(auto_parse_startup())
+    asyncio.create_task(_auto_parse_startup())
 
-    @kernel.register.command('parsetriggers')
+    @kernel.register.command("parsetriggers")
     # обновить базу триггеров из канала
     async def parsetriggers_cmd(event):
         await run_parser(event)
@@ -214,7 +265,7 @@ def register(kernel):
                 ttype, trigger = "exact", content_after.strip().lower()
         return ttype, trigger
 
-    @kernel.register.command('addtrigger')
+    @kernel.register.command("addtrigger")
     # добавить новый триггер (ответ на сообщение + текст триггера)
     async def addtrigger_cmd(event):
         try:
@@ -234,7 +285,7 @@ def register(kernel):
                 await event.edit("❌ неверный формат триггера")
                 return
 
-            source_id = kernel.config.get('sourcetrigger_channel_id')
+            source_id = _get_channel_id()
             if not source_id:
                 await event.edit("❌ источник не настроен")
                 return
@@ -243,7 +294,9 @@ def register(kernel):
 
             try:
                 content_msg = await client.send_file(source_id, reply)
-                trigger_msg = await client.send_message(source_id, trigger_text, reply_to=content_msg.id)
+                trigger_msg = await client.send_message(
+                    source_id, trigger_text, reply_to=content_msg.id
+                )
 
                 key = f"{ttype}::{trigger}"
                 if key not in triggers:
@@ -254,17 +307,21 @@ def register(kernel):
 
                 save_triggers()
 
-                await event.edit(f"🪬 <b>Триггер</b> добавлен: <code>{trigger_text}</code>", parse_mode='html')
+                await event.edit(
+                    f"🪬 <b>Триггер</b> добавлен: <code>{trigger_text}</code>",
+                    parse_mode="html",
+                )
                 await event.delete()
             except Exception as e:
                 await event.edit(f"❌ ошибка: {str(e)[:100]}")
         except Exception as e:
             await kernel.handle_error(e, source="addtrigger_cmd", event=event)
-            await event.edit("🌩️ <b>ошибка, смотри логи</b>", parse_mode='html')
+            await event.edit("🌩️ <b>ошибка, смотри логи</b>", parse_mode="html")
 
+    @kernel.register.watcher()
     async def source_channel_watcher(event):
         try:
-            source_id = kernel.config.get('sourcetrigger_channel_id')
+            source_id = _get_channel_id()
             if not source_id:
                 return
 
@@ -287,22 +344,22 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="source_channel_watcher", event=event)
 
-    client.on(events.NewMessage(func=lambda e: True))(source_channel_watcher)
     async def process_and_send(trigger_message, msg_id):
         try:
-            source_id = kernel.config.get('sourcetrigger_channel_id')
+            source_id = _get_channel_id()
             if not source_id:
                 return
 
             source_msg = await client.get_messages(source_id, ids=msg_id)
             if not source_msg:
                 return
-            reply_to_id = trigger_message.reply_to_msg_id if trigger_message.is_reply else None
+
+            reply_to_id = (
+                trigger_message.reply_to_msg_id if trigger_message.is_reply else None
+            )
 
             await client.send_message(
-                trigger_message.chat_id,
-                source_msg,
-                reply_to=reply_to_id
+                trigger_message.chat_id, source_msg, reply_to=reply_to_id
             )
 
             logger.debug(f"message {msg_id} forwarded to {trigger_message.chat_id}")
@@ -310,9 +367,10 @@ def register(kernel):
         except Exception as e:
             logger.error(f"forward error for {msg_id}: {e}")
 
+    @kernel.register.watcher(out=True)
     async def trigger_watcher(event):
         try:
-            if not event.out or not event.text:
+            if not event.text:
                 return
 
             text = event.text
@@ -373,5 +431,3 @@ def register(kernel):
                     await event.delete()
         except Exception as e:
             await kernel.handle_error(e, source="trigger_watcher", event=event)
-
-    client.on(events.NewMessage(outgoing=True, func=lambda e: bool(e.text)))(trigger_watcher)
