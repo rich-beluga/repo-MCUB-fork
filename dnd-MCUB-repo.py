@@ -889,5 +889,7 @@ def register(kernel):
                 await client.send_message(me.id, hello_msg, parse_mode="html")
 
             get_config()["dnd_ignore_hello"] = True
+            await kernel.save_module_config(__name__, get_config().to_dict())
 
     asyncio.create_task(startup_check())
+
