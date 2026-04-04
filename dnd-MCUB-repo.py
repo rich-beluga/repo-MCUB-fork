@@ -1,3 +1,8 @@
+# author: unknown
+# version: 1.1.3
+# description:  Unit «SIGMA»
+# banner_url: https://github.com/hikariatama/assets/raw/master/unit_sigma.png
+
 import asyncio
 import datetime
 import json
