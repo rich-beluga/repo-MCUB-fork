@@ -869,27 +869,3 @@ def register(kernel):
             await kernel.handle_error(e, source="dnd:message_watcher", event=event)
             kernel.logger.error(f"Error in DND watcher: {e}")
 
-    async def startup_check():
-        if not get_config().get("dnd_ignore_hello"):
-            me = await client.get_me()
-            hello_msg = (
-                f"{CUSTOM_EMOJI['lock']} <b>Unit «SIGMA»</b> защищает ваши личные сообщения "
-                f"от нежелательного контакта. Это будет блокировать всех, кто попытается "
-                f"связаться с Вами.\n\nИспользуйте <code>{prefix}pmbanlast</code> если уже "
-                f"были попытки нежелательного вторжения."
-            )
-            try:
-                await client.send_file(
-                    me.id,
-                    "https://github.com/hikariatama/assets/raw/master/unit_sigma.png",
-                    caption=hello_msg,
-                    parse_mode="html",
-                )
-            except:
-                await client.send_message(me.id, hello_msg, parse_mode="html")
-
-            get_config()["dnd_ignore_hello"] = True
-            await kernel.save_module_config(__name__, get_config().to_dict())
-
-    asyncio.create_task(startup_check())
-
