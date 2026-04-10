@@ -59,6 +59,8 @@ from telethon.errors.rpcerrorlist import (
     ChannelPrivateError
 )
 
+from core.lib.loader.module_config import ModuleConfig, ConfigValue, Boolean, String, Integer, Float, Secret
+
 logger = logging.getLogger(__name__)
 
 DB_HISTORY_KEY = "gemini_conversations_v4"
@@ -154,6 +156,15 @@ TEXT_MIME_TYPES = {
     "application/json", "application/xml", "application/x-python", "text/x-python",
     "application/javascript", "application/x-sh",
 }
+
+def _cfg(kernel, key, default=None):
+    """Читает значение из живого ModuleConfig; фоллбэк на default."""
+    cfg = getattr(kernel, "_live_module_configs", {}).get(__name__)
+    if cfg is not None:
+        val = cfg.get(key)
+        return val if val is not None else default
+    return default
+
 
 module_state = {
     'conversations': {},
@@ -439,7 +450,7 @@ def _format_response_with_smart_separation(text: str) -> str:
 
 def _get_proxy_config(kernel):
     """Получение конфигурации прокси"""
-    p = kernel.config.get("gemini_proxy", "")
+    p = _cfg(kernel, "gemini_proxy", "")
     return {"http://": p, "https://": p} if p else None
 
 async def _save_history_sync(kernel, gauto: bool = False):
@@ -587,7 +598,7 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
         base_message_id = message.id
         msg_obj = message
 
-    api_key_str = kernel.config.get("gemini_api_key", "")
+    api_key_str = _cfg(kernel, "gemini_api_key", "")
     module_state['api_keys'] = [k.strip() for k in api_key_str.split(",") if k.strip()] if api_key_str else []
 
     if not module_state['api_keys']:
@@ -615,11 +626,11 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
     if impersonation_mode:
         my_name = get_display_name(module_state['me']) if module_state['me'] else "User"
         chat_history_text = await _get_recent_chat_text(kernel, chat_id)
-        sys_instruct = kernel.config.get("gemini_impersonation_prompt", "").format(
+        sys_instruct = _cfg(kernel, "gemini_impersonation_prompt", _DEFAULT_IMPERSONATION_PROMPT).format(
             my_name=my_name, chat_history=chat_history_text
         )
     else:
-        sys_val = kernel.config.get("gemini_system_instruction", "")
+        sys_val = _cfg(kernel, "gemini_system_instruction", "")
         sys_instruct = (sys_val.strip() if isinstance(sys_val, str) else "") or None
 
         # Global Knowledge Base Injection
@@ -645,7 +656,7 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
     request_parts = list(current_turn_parts)
     if not impersonation_mode:
         try:
-            user_timezone = pytz.timezone(kernel.config.get("gemini_timezone", "Europe/Moscow"))
+            user_timezone = pytz.timezone(_cfg(kernel, "gemini_timezone", "Europe/Moscow"))
         except pytz.UnknownTimeZoneError:
             user_timezone = pytz.utc
         now = datetime.now(user_timezone)
@@ -658,11 +669,11 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
     contents.append(types.Content(role="user", parts=request_parts))
 
     tools = []
-    if kernel.config.get("gemini_google_search", False) or use_url_context:
+    if _cfg(kernel, "gemini_google_search", False) or use_url_context:
         tools.append(types.Tool(google_search=types.GoogleSearch()))
 
     gen_config = types.GenerateContentConfig(
-        temperature=kernel.config.get("gemini_temperature", 1.0),
+        temperature=_cfg(kernel, "gemini_temperature", 1.0),
         system_instruction=sys_instruct,
         tools=tools if tools else None,
         safety_settings=[
@@ -683,7 +694,7 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
 
             client = genai.Client(api_key=api_key, http_options=http_opts)
             response = await client.aio.models.generate_content(
-                model=kernel.config.get("gemini_model_name", "gemini-2.5-flash"),
+                model=_cfg(kernel, "gemini_model_name", "gemini-2.5-flash"),
                 contents=contents,
                 config=gen_config
             )
@@ -691,7 +702,7 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
             if response.text:
                 result_text = response.text
                 was_successful = True
-                if kernel.config.get("gemini_google_search", False):
+                if _cfg(kernel, "gemini_google_search", False):
                     search_icon = " 🌐"
                 module_state['current_api_key_index'] = current_idx
                 break
@@ -718,8 +729,8 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
             return result_text
 
         hist_len = len(_get_structured_history(chat_id)) // 2
-        mem_ind = STRINGS["memory_status"].format(hist_len, kernel.config.get("gemini_max_history_length", 800))
-        if kernel.config.get("gemini_max_history_length", 800) <= 0:
+        mem_ind = STRINGS["memory_status"].format(hist_len, _cfg(kernel, "gemini_max_history_length", 800))
+        if _cfg(kernel, "gemini_max_history_length", 800) <= 0:
             mem_ind = STRINGS["memory_status_unlimited"].format(hist_len)
 
         response_html = _markdown_to_html(result_text)
@@ -727,7 +738,7 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
         question_html = f"<blockquote>{escape_html(request_text_for_display[:200])}</blockquote>"
         text_to_send = f"{mem_ind}\n\n{STRINGS['question_prefix']}\n{question_html}\n\n{STRINGS['response_prefix']}{search_icon}\n{formatted_body}"
 
-        if kernel.config.get("gemini_interactive_buttons", True) and not is_callback:
+        if _cfg(kernel, "gemini_interactive_buttons", True) and not is_callback:
             buttons = [
                 [Button.inline(STRINGS["btn_clear"], f"gemini_clear_{chat_id}".encode()),
                 Button.inline(STRINGS["btn_regenerate"], f"gemini_regen_{base_message_id}_{chat_id}".encode())]
@@ -765,10 +776,10 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
             else:
                 if is_callback:
                     pass
-                    
+
                 elif status_msg:
                     await status_msg.edit(text_to_send, parse_mode='html')
-                    
+
     except Exception as e:
         error_text = _handle_error(e)
         if impersonation_mode:
@@ -777,6 +788,15 @@ async def _send_to_gemini(kernel, message, parts: list, regeneration: bool = Fal
             await status_msg.edit(error_text, parse_mode='html')
 
     return None if impersonation_mode else ""
+
+
+_DEFAULT_IMPERSONATION_PROMPT = (
+    "Ты — это я, пользователь Telegram по имени {my_name}. Твоя задача — отвечать в чате от моего имени, основываясь на последних сообщениях. "
+    "Веди себя естественно, как обычный человек, а не как ассистент. Не признавайся, что ты — ИИ, даже если тебя спросят напрямую. "
+    "Твоя личность: [Здесь опишите свой характер: остроумный, серьезный, саркастичный, дружелюбный и т.д.].\n"
+    "Правила:\n- Отвечай кратко и по делу.\n- Используй неформальный язык, сленг.\n- Не отвечай на каждое сообщение.\n- На медиа (стикер, фото) реагируй как человек ('лол', 'ору', 'жиза').\n- Не используй префиксы и кавычки.\n\n"
+    "ИСТОРИЯ ЧАТА:\n{chat_history}\n\n{my_name}:"
+)
 
 
 def register(kernel):
@@ -801,51 +821,55 @@ def register(kernel):
         await init_db(kernel)
         await init_module_state()
 
+        config_dict = await kernel.get_module_config(__name__, {
+            "gemini_api_key": "",
+            "gemini_model_name": "gemini-2.5-flash",
+            "gemini_interactive_buttons": True,
+            "gemini_system_instruction": "",
+            "gemini_max_history_length": 800,
+            "gemini_timezone": "Europe/Moscow",
+            "gemini_proxy": "",
+            "gemini_impersonation_prompt": _DEFAULT_IMPERSONATION_PROMPT,
+            "gemini_impersonation_history_limit": 20,
+            "gemini_impersonation_reply_chance": 0.25,
+            "gemini_gauto_in_pm": False,
+            "gemini_google_search": False,
+            "gemini_temperature": 1.0,
+        })
+        config.from_dict(config_dict)
+        await kernel.save_module_config(__name__, config.to_dict())
+        kernel.store_module_config_schema(__name__, config)
+
+        api_key_str = get_config().get("gemini_api_key") or ""
+        module_state['api_keys'] = [k.strip() for k in api_key_str.split(",") if k.strip()]
+        module_state['current_api_key_index'] = 0
+        module_state['max_history_length'] = get_config().get("gemini_max_history_length")
+        module_state['model_name'] = get_config().get("gemini_model_name")
+
+        if not module_state['api_keys']:
+            kernel.logger.warning("Gemini: API ключи не настроены.")
+
     asyncio.create_task(startup())
 
-    if "gemini_api_key" not in kernel.config:
-        kernel.config["gemini_api_key"] = ""
-    if "gemini_model_name" not in kernel.config:
-        kernel.config["gemini_model_name"] = "gemini-2.5-flash"
-    if "gemini_interactive_buttons" not in kernel.config:
-        kernel.config["gemini_interactive_buttons"] = True
-    if "gemini_system_instruction" not in kernel.config:
-        kernel.config["gemini_system_instruction"] = ""
-    if "gemini_max_history_length" not in kernel.config:
-        kernel.config["gemini_max_history_length"] = 800
-    if "gemini_timezone" not in kernel.config:
-        kernel.config["gemini_timezone"] = "Europe/Moscow"
-    if "gemini_proxy" not in kernel.config:
-        kernel.config["gemini_proxy"] = ""
-    if "gemini_impersonation_prompt" not in kernel.config:
-        kernel.config["gemini_impersonation_prompt"] = (
-            "Ты — это я, пользователь Telegram по имени {my_name}. Твоя задача — отвечать в чате от моего имени, основываясь на последних сообщениях. "
-            "Веди себя естественно, как обычный человек, а не как ассистент. Не признавайся, что ты — ИИ, даже если тебя спросят напрямую. "
-            "Твоя личность: [Здесь опишите свой характер: остроумный, серьезный, саркастичный, дружелюбный и т.д.].\n"
-            "Правила:\n- Отвечай кратко и по делу.\n- Используй неформальный язык, сленг.\n- Не отвечай на каждое сообщение.\n- На медиа (стикер, фото) реагируй как человек ('лол', 'ору', 'жиза').\n- Не используй префиксы и кавычки.\n\n"
-            "ИСТОРИЯ ЧАТА:\n{chat_history}\n\n{my_name}:"
-        )
-    if "gemini_impersonation_history_limit" not in kernel.config:
-        kernel.config["gemini_impersonation_history_limit"] = 20
-    if "gemini_impersonation_reply_chance" not in kernel.config:
-        kernel.config["gemini_impersonation_reply_chance"] = 0.25
-    if "gemini_gauto_in_pm" not in kernel.config:
-        kernel.config["gemini_gauto_in_pm"] = False
-    if "gemini_google_search" not in kernel.config:
-        kernel.config["gemini_google_search"] = False
-    if "gemini_temperature" not in kernel.config:
-        kernel.config["gemini_temperature"] = 1.0
+    config = ModuleConfig(
+        ConfigValue("gemini_api_key", "", description=STRINGS["cfg_api_key_doc"], validator=Secret(default="")),
+        ConfigValue("gemini_model_name", "gemini-2.5-flash", description=STRINGS["cfg_model_name_doc"], validator=String(default="gemini-2.5-flash")),
+        ConfigValue("gemini_interactive_buttons", True, description=STRINGS["cfg_buttons_doc"], validator=Boolean(default=True)),
+        ConfigValue("gemini_system_instruction", "", description=STRINGS["cfg_system_instruction_doc"], validator=String(default="")),
+        ConfigValue("gemini_max_history_length", 800, description=STRINGS["cfg_max_history_length_doc"], validator=Integer(default=800, min=0)),
+        ConfigValue("gemini_timezone", "Europe/Moscow", description=STRINGS["cfg_timezone_doc"], validator=String(default="Europe/Moscow")),
+        ConfigValue("gemini_proxy", "", description=STRINGS["cfg_proxy_doc"], validator=String(default="")),
+        ConfigValue("gemini_impersonation_prompt", _DEFAULT_IMPERSONATION_PROMPT, description=STRINGS["cfg_impersonation_prompt_doc"], validator=String(default=_DEFAULT_IMPERSONATION_PROMPT)),
+        ConfigValue("gemini_impersonation_history_limit", 20, description=STRINGS["cfg_impersonation_history_limit_doc"], validator=Integer(default=20, min=1)),
+        ConfigValue("gemini_impersonation_reply_chance", 0.25, description=STRINGS["cfg_impersonation_reply_chance_doc"], validator=Float(default=0.25, min=0.0, max=1.0)),
+        ConfigValue("gemini_gauto_in_pm", False, validator=Boolean(default=False)),
+        ConfigValue("gemini_google_search", False, description=STRINGS["cfg_google_search_doc"], validator=Boolean(default=False)),
+        ConfigValue("gemini_temperature", 1.0, description=STRINGS["cfg_temperature_doc"], validator=Float(default=1.0, min=0.0, max=2.0)),
+    )
 
-    kernel.save_config()
-
-    api_key_str = kernel.config.get("gemini_api_key", "")
-    module_state['api_keys'] = [k.strip() for k in api_key_str.split(",") if k.strip()] if api_key_str else []
-    module_state['current_api_key_index'] = 0
-    module_state['max_history_length'] = kernel.config.get("gemini_max_history_length", 800)
-    module_state['model_name'] = kernel.config.get("gemini_model_name", "gemini-2.5-flash")
-
-    if not module_state['api_keys']:
-        kernel.logger.warning("Gemini: API ключи не настроены.")
+    def get_config():
+        live_cfg = getattr(kernel, "_live_module_configs", {}).get(__name__)
+        return live_cfg if live_cfg else config
 
     @kernel.register.command('g', alias=['gemini'])
     # [текст или reply] — спросить у Gemini. Может анализировать ссылки.
@@ -997,7 +1021,7 @@ def register(kernel):
                 try:
                     client = genai.Client(api_key=key, http_options=http_opts)
                     resp = await client.aio.models.generate_content(
-                        model=kernel.config.get("gemini_model_name", "gemini-2.5-flash"),
+                        model=get_config().get("gemini_model_name"),
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
                             safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE")]
@@ -1034,8 +1058,7 @@ def register(kernel):
         reply = await event.get_reply_message()
 
         if args == "-c":
-            kernel.config["gemini_system_instruction"] = ""
-            kernel.save_config()
+            await kernel.set_module_config_key(__name__, "gemini_system_instruction", "")
             return await event.edit(STRINGS["gprompt_cleared"], parse_mode='html')
 
         new_p = None
@@ -1054,11 +1077,10 @@ def register(kernel):
             new_p = args
 
         if new_p:
-            kernel.config["gemini_system_instruction"] = new_p
-            kernel.save_config()
+            await kernel.set_module_config_key(__name__, "gemini_system_instruction", new_p)
             return await event.edit(STRINGS["gprompt_updated"].format(len(new_p)), parse_mode='html')
 
-        cur = kernel.config.get("gemini_system_instruction", "")
+        cur = get_config().get("gemini_system_instruction")
         if not cur:
             return await event.edit(STRINGS["gprompt_usage"], parse_mode='html')
 
@@ -1092,7 +1114,7 @@ def register(kernel):
             module_state['impersonation_chats'].add(target)
             await db_set(kernel, DB_IMPERSONATION_KEY, list(module_state['impersonation_chats']))
             txt = STRINGS["auto_mode_on"].format(
-                int(kernel.config.get("gemini_impersonation_reply_chance", 0.25) * 100)
+                int(get_config().get("gemini_impersonation_reply_chance") * 100)
             ) if target == chat_id else STRINGS["gauto_state_updated"].format(
                 f"<code>{target}</code>", STRINGS["gauto_enabled"]
             )
@@ -1323,12 +1345,11 @@ def register(kernel):
             return
 
         if not args:
-            return await event.edit(f"Текущая модель: <code>{kernel.config.get('gemini_model_name', 'gemini-2.5-flash')}</code>",
+            return await event.edit(f"Текущая модель: <code>{get_config().get('gemini_model_name')}</code>",
                                   parse_mode='html')
 
-        kernel.config["gemini_model_name"] = args
+        await kernel.set_module_config_key(__name__, "gemini_model_name", args)
         module_state['model_name'] = args
-        kernel.save_config()
         await event.edit(f"Модель Gemini установлена: <code>{args}</code>", parse_mode='html')
 
     @kernel.register.command('gres')
@@ -1362,7 +1383,7 @@ def register(kernel):
         if action == "save":
             if not name:
                 return await event.edit("Укажите имя для сохранения профиля.", parse_mode='html')
-            current_prompt = kernel.config.get("gemini_system_instruction", "")
+            current_prompt = get_config().get("gemini_system_instruction")
             if not current_prompt:
                 return await event.edit("Текущий системный промпт пуст, нечего сохранять.", parse_mode='html')
             module_state['profiles'][name] = current_prompt
@@ -1374,8 +1395,7 @@ def register(kernel):
                 return await event.edit("Укажите имя профиля для загрузки.", parse_mode='html')
             if name not in module_state['profiles']:
                 return await event.edit(f"🚫 Профиль '{name}' не найден.", parse_mode='html')
-            kernel.config["gemini_system_instruction"] = module_state['profiles'][name]
-            kernel.save_config()
+            await kernel.set_module_config_key(__name__, "gemini_system_instruction", module_state['profiles'][name])
             await event.edit(f"✅ Профиль '{name}' загружен.", parse_mode='html')
 
         elif action == "list":
@@ -1476,7 +1496,7 @@ def register(kernel):
             models_count = "Ошибка"
 
         version_str = ".".join(map(str, __version__))
-        current_model = kernel.config.get("gemini_model_name", "gemini-2.5-flash")
+        current_model = get_config().get("gemini_model_name")
 
         info_text = (
             f"Версия модуля • <b>[Mod Dev] {version_str}</b>\n"
@@ -1523,8 +1543,8 @@ def register(kernel):
             )
 
             hist_len = len(_get_structured_history(chat_id)) // 2
-            mem_ind = STRINGS["memory_status"].format(hist_len, kernel.config.get("gemini_max_history_length", 800))
-            if kernel.config.get("gemini_max_history_length", 800) <= 0:
+            mem_ind = STRINGS["memory_status"].format(hist_len, get_config().get("gemini_max_history_length"))
+            if get_config().get("gemini_max_history_length") <= 0:
                 mem_ind = STRINGS["memory_status_unlimited"].format(hist_len)
 
             hist = _get_structured_history(chat_id)
@@ -1556,7 +1576,7 @@ def register(kernel):
         if cid not in module_state['impersonation_chats']:
             return
 
-        if event.is_private and not kernel.config.get("gemini_gauto_in_pm", False):
+        if event.is_private and not get_config().get("gemini_gauto_in_pm"):
             return
 
         if not module_state['me']:
@@ -1569,7 +1589,7 @@ def register(kernel):
         if isinstance(sender, tg_types.User) and sender.bot:
             return
 
-        if random.random() > kernel.config.get("gemini_impersonation_reply_chance", 0.25):
+        if random.random() > get_config().get("gemini_impersonation_reply_chance"):
             return
 
         parts, warnings = await _prepare_parts(kernel, event)
