@@ -39,7 +39,7 @@ def register(kernel):
         }
     }
 
-    @kernel.register_command('pts')
+    @kernel.register.command('pts')
     # <reply to photo> - make 3x3 grid
     async def pts_cmd(event):
         lang = kernel.config.get('language', 'ru')
