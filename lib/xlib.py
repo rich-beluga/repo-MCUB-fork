@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2026 MCUB
+# Copyright (c) 2026 Шмэлька | @hairpin01
 
 """
 xlib - MCUB Utility Library
@@ -7,7 +7,7 @@ xlib - MCUB Utility Library
 A comprehensive utility library providing common formatting, keyboard generation,
 and text manipulation functions for MCUB modules.
 
-Usage in class-style modules: (v1.2.7 version MCUB)
+Usage in class-style modules:
     self.xlib = await self.import_lib("https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/refs/heads/main/lib/xlib.py")
     text = self.xlib.format_size(1024)
 """
@@ -44,6 +44,9 @@ __all__ = [
     "link",
     "button",
     "pre",
+    "Menu",
+    "Paginator",
+    "ask",
 ]
 
 DEFAULT_LOCALE = "en"
@@ -695,3 +698,308 @@ def pre(text: str) -> str:
         pre("code here") -> "<pre>code here</pre>"
     """
     return f"<pre>{text}</pre>"
+
+
+import uuid
+import asyncio
+
+
+class Menu:
+    """
+    Hierarchical inline menu with callback binding.
+
+    Usage:
+        menu = Menu(self, "Main Menu")
+        menu.add("Settings", self.show_settings)
+        menu.add_submenu("Profile", profile_menu)
+        menu.add_url("Help", "https://...")
+        await menu.show(event)
+    """
+
+    def __init__(
+        self,
+        module: Any,
+        title: str = "",
+        cols: int = 2,
+        show_back: bool = True,
+    ):
+        self._module = module
+        self._id = str(uuid.uuid4())[:8]
+        self._title = title
+        self._cols = cols
+        self._show_back = show_back
+        self._items = []
+        self._parent = None
+        self._module._menus = getattr(self._module, "_menus", {})
+        self._module._menus[self._id] = self
+
+    def add(self, label: str, callback: callable) -> None:
+        """Add action item (callback = callable)."""
+        self._items.append({"type": "action", "label": label, "callback": callback})
+
+    def add_submenu(self, label: str, submenu: "Menu") -> None:
+        """Add submenu."""
+        submenu._parent = self
+        self._items.append({"type": "submenu", "label": label, "submenu": submenu})
+
+    def add_url(self, label: str, url: str) -> None:
+        """Add URL button."""
+        self._items.append({"type": "url", "label": label, "url": url})
+
+    async def show(self, event: Any, edit: bool = True) -> Any:
+        """Show menu (use event.edit() to edit, event.reply() for new)."""
+        buttons = self._build_buttons()
+        text = f"<b>{self._title}</b>" if self._title else "<b>Menu</b>"
+
+        if edit:
+            return await event.edit(text, buttons=buttons)
+        return await event.reply(text, buttons=buttons)
+
+    def _build_buttons(self) -> list[list]:
+        B = _get_button()
+        rows = []
+        row = []
+
+        for item in self._items:
+            label = item["label"]
+            if item["type"] == "action":
+                data = f"menu:{self._id}:{label}".encode()
+                row.append(B.inline(label, data))
+            elif item["type"] == "submenu":
+                data = f"menu:{item['submenu']._id}:sub".encode()
+                row.append(B.inline(label, data))
+            elif item["type"] == "url":
+                row.append(B.url(label, item["url"]))
+
+            if len(row) == self._cols:
+                rows.append(row)
+                row = []
+
+        if row:
+            rows.append(row)
+
+        if self._parent and self._show_back:
+            data = f"menu:{self._parent._id}:back".encode()
+            rows.append([B.inline("◀ Back", data)])
+
+        return rows
+
+    async def handle_callback(self, event: Any, data: str) -> None:
+        """Handle callback from button. Call from your callback handler."""
+        parts = data.split(":", 1)
+        if len(parts) != 2:
+            return
+
+        menu_id, action = parts
+
+        if action == "back" and self._parent:
+            await self._parent.show(event, edit=True)
+            return
+
+        if action == "sub":
+            submenu = self._module._menus.get(menu_id)
+            if submenu:
+                await submenu.show(event, edit=True)
+            return
+
+        menu = self._module._menus.get(menu_id)
+        if not menu:
+            return
+
+        for item in menu._items:
+            if item["type"] == "action" and item["label"] == action:
+                callback = item["callback"]
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(event)
+                else:
+                    callback(event)
+                return
+
+
+class Paginator:
+    """
+    Customizable pagination.
+
+    Usage:
+        pag = Paginator(self, items, per_page=10)
+        pag.format_item = lambda item, i: f"{i+1}. {item['name']}"
+        pag.get_buttons = lambda p, page: [...]
+        await pag.show(event)
+    """
+
+    def __init__(
+        self,
+        module: Any,
+        items: list,
+        per_page: int = 10,
+    ):
+        self._module = module
+        self._items = items
+        self._per_page = per_page
+        self._token = str(uuid.uuid4())[:8]
+        self._current = 0
+
+        self._module._paginators = getattr(self._module, "_paginators", {})
+        self._module._paginators[self._token] = self
+
+    @property
+    def total(self) -> int:
+        return len(self._items)
+
+    @property
+    def pages(self) -> int:
+        return (self.total + self._per_page - 1) // self._per_page
+
+    @property
+    def current(self) -> int:
+        return self._current
+
+    def get_page_items(self) -> list:
+        start = self._current * self._per_page
+        return self._items[start : start + self._per_page]
+
+    def format_item(self, item: Any, index: int) -> str:
+        """Override for custom item format."""
+        return f"{index + 1}. {item}"
+
+    def get_buttons(self, page: int, total: int) -> list[list]:
+        """Override for custom buttons."""
+        B = _get_button()
+        rows = []
+        row = []
+
+        if page > 0:
+            row.append(B.inline("◀", f"page:{self._token}:{page - 1}".encode()))
+        if page < total - 1:
+            row.append(B.inline("▶", f"page:{self._token}:{page + 1}".encode()))
+
+        if row:
+            rows.append(row)
+
+        return rows
+
+    async def show(self, event: Any, edit: bool = True) -> Any:
+        """Show current page."""
+        items = self.get_page_items()
+        lines = [
+            self.format_item(item, i)
+            for i, item in enumerate(items, start=self._current * self._per_page)
+        ]
+        text = "\n".join(lines)
+        text += f"\n\n{self._current + 1}/{self.pages}"
+
+        buttons = self.get_buttons(self._current, self.pages)
+
+        if edit:
+            return await event.edit(text, buttons=buttons)
+        return await event.reply(text, buttons=buttons)
+
+    async def handle_callback(self, event: Any, data: str) -> None:
+        """Handle page navigation. Call from your callback handler."""
+        parts = data.split(":")
+        if len(parts) != 2:
+            return
+
+        token, page_str = parts
+        if token != self._token:
+            return
+
+        try:
+            self._current = int(page_str)
+        except ValueError:
+            return
+
+        await self.show(event, edit=True)
+
+
+async def ask(
+    module: Any,
+    event: Any,
+    timeout: int = 60,
+    cancel_word: str = "cancel",
+) -> Any:
+    """
+    Wait for user answer after asking.
+
+    Does NOT send message - you must send question manually first.
+
+    Args:
+        module: ModuleBase instance.
+        event: Event that triggered the question.
+        timeout: Timeout in seconds.
+        cancel_word: Stop word to cancel (case-insensitive).
+
+    Returns:
+        asyncio.Future - await this to get the answer text, or None if cancel/timeout.
+
+    Example:
+        # 1. Send question manually
+        await event.edit("Your name?")
+
+        # 2. Wait for answer
+        answer = await ask(self, event)
+        result = await answer
+
+        if result:
+            await event.respond(f"Hello, {result}!")
+    """
+    chat_id = event.chat_id
+    user_id = event.sender_id
+    topic_id = getattr(event, "topic_id", None)
+    msg_id = event.id
+
+    future = asyncio.Future()
+    token = f"ask:{chat_id}:{user_id}"
+    if topic_id:
+        token = f"ask:{chat_id}:{topic_id}:{user_id}"
+
+    module._pending_asks = getattr(module, "_pending_asks", {})
+    module._pending_asks[token] = {
+        "future": future,
+        "cancel_word": cancel_word.lower(),
+    }
+
+    async def temp_watcher(msg_event):
+        if msg_event.chat_id != chat_id:
+            return
+        if msg_event.sender_id != user_id:
+            return
+        if topic_id is not None:
+            if getattr(msg_event, "topic_id", None) != topic_id:
+                return
+        if msg_event.id == msg_id:
+            return
+
+        data = module._pending_asks.get(token, {})
+        if data.get("future", None) is None:
+            return
+
+        if future.done():
+            return
+
+        text = msg_event.raw_text
+        if text.lower() == cancel_word.lower():
+            future.set_result(None)
+        else:
+            future.set_result(text)
+
+    from core.lib.loader import register as reg_module
+
+    handler = reg_module._register.watcher(
+        out=False,
+        incoming=True,
+        from_id=user_id,
+        chat_id=chat_id,
+    )(temp_watcher)
+
+    module._temp_watchers = getattr(module, "_temp_watchers", [])
+    module._temp_watchers.append(handler)
+
+    try:
+        result = await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError:
+        result = None
+
+    module._pending_asks.pop(token, None)
+
+    return future
