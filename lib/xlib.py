@@ -983,12 +983,13 @@ async def ask(
         else:
             future.set_result(msg_event)
 
-    handler = module._register.watcher(
+    module._register.watcher(
+        temp_watcher,
         out=False,
         incoming=True,
         from_id=user_id,
         chat_id=chat_id,
-    )(temp_watcher)
+    )
 
     module._temp_watchers = getattr(module, "_temp_watchers", [])
     module._temp_watchers.append(handler)
