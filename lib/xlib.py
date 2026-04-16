@@ -930,7 +930,7 @@ async def ask(
         cancel_word: Stop word to cancel (case-insensitive).
 
     Returns:
-        asyncio.Future - await this to get the answer text, or None if cancel/timeout.
+        asyncio.Future - await this to get the event, or None if cancel/timeout.
 
     Example:
         # 1. Send question manually
@@ -938,10 +938,10 @@ async def ask(
 
         # 2. Wait for answer
         answer = await ask(self, event)
-        result = await answer
+        msg_event = await answer
 
-        if result:
-            await event.respond(f"Hello, {result}!")
+        if msg_event:
+            await event.respond(f"Hello, {msg_event.raw_text}!")
     """
     chat_id = event.chat_id
     user_id = event.sender_id
@@ -981,11 +981,9 @@ async def ask(
         if text.lower() == cancel_word.lower():
             future.set_result(None)
         else:
-            future.set_result(text)
+            future.set_result(msg_event)
 
-    from core.lib.loader import register as reg_module
-
-    handler = reg_module._register.watcher(
+    handler = module._register.watcher(
         out=False,
         incoming=True,
         from_id=user_id,
