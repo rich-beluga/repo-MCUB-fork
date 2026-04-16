@@ -991,9 +991,6 @@ async def ask(
         chat_id=chat_id,
     )
 
-    module._temp_watchers = getattr(module, "_temp_watchers", [])
-    module._temp_watchers.append(handler)
-
     try:
         result = await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError:
