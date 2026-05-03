@@ -1,6 +1,10 @@
-# SPDX-License-Identifier: MIT
-# scop: inline
+# -- repo data --
 # scop: kernel min v1.2.8
+# repo: https://github.com/hairpin01/repo-MCUB-fork/
+# -- end --
+# scop: inline
+# SPDX-License-Identifier: MIT
+
 from __future__ import annotations
 
 import asyncio
@@ -8,22 +12,45 @@ import base64
 import html
 import io
 import mimetypes
+import random
 import re
 import tempfile
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import aiohttp
 from telethon import events
+from telethon.tl.functions.account import (
+    UpdateProfileRequest,
+    UpdateUsernameRequest as UpdateAccountUsernameRequest,
+)
 from telethon.tl.functions.channels import (
     CreateChannelRequest,
+    EditAdminRequest,
     EditPhotoRequest,
+    EditTitleRequest,
+    JoinChannelRequest,
+    ToggleSlowModeRequest,
     UpdateUsernameRequest,
 )
-from telethon.tl.functions.messages import EditChatAboutRequest, ExportChatInviteRequest
+from telethon.tl.functions.contacts import (
+    AddContactRequest,
+    BlockRequest,
+    DeleteContactsRequest,
+    UnblockRequest,
+)
+from telethon.tl.functions.messages import (
+    EditChatAboutRequest,
+    ExportChatInviteRequest,
+    ImportChatInviteRequest,
+    SaveDraftRequest,
+)
+from telethon.tl.functions.photos import UploadProfilePhotoRequest
+from telethon.tl.types import ChannelParticipantsAdmins, ChatAdminRights
 
 from core.lib.loader.module_base import ModuleBase, command
 from core.lib.loader.module_config import (
@@ -40,7 +67,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.3.0"
+    version = "0.3.1"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с доступом к терминалу",
@@ -115,6 +142,64 @@ class OpenAgent(ModuleBase):
     CREATE_BOT_RE = re.compile(
         r"<create_bot([^>]*)>(.*?)</create_bot>", re.DOTALL | re.I
     )
+    HISTORY_RE = re.compile(r"<history([^>]*)>(.*?)</history>", re.DOTALL | re.I)
+    SEARCH_MESSAGES_RE = re.compile(
+        r"<search_messages([^>]*)>(.*?)</search_messages>", re.DOTALL | re.I
+    )
+    UPDATE_PROFILE_RE = re.compile(
+        r"<update_profile([^>]*)>(.*?)</update_profile>", re.DOTALL | re.I
+    )
+    SET_PROFILE_PHOTO_RE = re.compile(
+        r"<set_profile_photo([^>]*)>(.*?)</set_profile_photo>", re.DOTALL | re.I
+    )
+    JOIN_CHAT_RE = re.compile(r"<join_chat([^>]*)>(.*?)</join_chat>", re.DOTALL | re.I)
+    PIN_MESSAGE_RE = re.compile(r"<pin_message([^>]*)>(.*?)</pin_message>", re.DOTALL | re.I)
+    DELETE_MESSAGES_RE = re.compile(
+        r"<delete_messages([^>]*)>(.*?)</delete_messages>", re.DOTALL | re.I
+    )
+    FORWARD_MESSAGE_RE = re.compile(
+        r"<forward_message([^>]*)>(.*?)</forward_message>", re.DOTALL | re.I
+    )
+    DOWNLOAD_MEDIA_RE = re.compile(
+        r"<download_media([^>]*)>(.*?)</download_media>", re.DOTALL | re.I
+    )
+    SEND_FILE_RE = re.compile(r"<send_file([^>]*)>(.*?)</send_file>", re.DOTALL | re.I)
+    MUTE_USER_RE = re.compile(r"<mute_user([^>]*)>(.*?)</mute_user>", re.DOTALL | re.I)
+    UNMUTE_USER_RE = re.compile(r"<unmute_user([^>]*)>(.*?)</unmute_user>", re.DOTALL | re.I)
+    BAN_USER_RE = re.compile(r"<ban_user([^>]*)>(.*?)</ban_user>", re.DOTALL | re.I)
+    UNBAN_USER_RE = re.compile(r"<unban_user([^>]*)>(.*?)</unban_user>", re.DOTALL | re.I)
+    KICK_USER_RE = re.compile(r"<kick_user([^>]*)>(.*?)</kick_user>", re.DOTALL | re.I)
+    PROMOTE_USER_RE = re.compile(r"<promote_user([^>]*)>(.*?)</promote_user>", re.DOTALL | re.I)
+    DEMOTE_USER_RE = re.compile(r"<demote_user([^>]*)>(.*?)</demote_user>", re.DOTALL | re.I)
+    SET_SLOWMODE_RE = re.compile(r"<set_slowmode([^>]*)>(.*?)</set_slowmode>", re.DOTALL | re.I)
+    SET_CHAT_TITLE_RE = re.compile(r"<set_chat_title([^>]*)>(.*?)</set_chat_title>", re.DOTALL | re.I)
+    SET_CHAT_ABOUT_RE = re.compile(r"<set_chat_about([^>]*)>(.*?)</set_chat_about>", re.DOTALL | re.I)
+    GET_ME_RE = re.compile(r"<get_me([^>]*)>(.*?)</get_me>", re.DOTALL | re.I)
+    GET_ENTITY_RE = re.compile(r"<get_entity([^>]*)>(.*?)</get_entity>", re.DOTALL | re.I)
+    GET_ADMINS_RE = re.compile(r"<get_admins([^>]*)>(.*?)</get_admins>", re.DOTALL | re.I)
+    EXPORT_INVITE_RE = re.compile(r"<export_invite([^>]*)>(.*?)</export_invite>", re.DOTALL | re.I)
+    MARK_READ_RE = re.compile(r"<mark_read([^>]*)>(.*?)</mark_read>", re.DOTALL | re.I)
+    ARCHIVE_DIALOG_RE = re.compile(r"<archive_dialog([^>]*)>(.*?)</archive_dialog>", re.DOTALL | re.I)
+    UNARCHIVE_DIALOG_RE = re.compile(r"<unarchive_dialog([^>]*)>(.*?)</unarchive_dialog>", re.DOTALL | re.I)
+    LEAVE_CHAT_RE = re.compile(r"<leave_chat([^>]*)>(.*?)</leave_chat>", re.DOTALL | re.I)
+    BLOCK_USER_RE = re.compile(r"<block_user([^>]*)>(.*?)</block_user>", re.DOTALL | re.I)
+    UNBLOCK_USER_RE = re.compile(r"<unblock_user([^>]*)>(.*?)</unblock_user>", re.DOTALL | re.I)
+    ADD_CONTACT_RE = re.compile(r"<add_contact([^>]*)>(.*?)</add_contact>", re.DOTALL | re.I)
+    DELETE_CONTACT_RE = re.compile(r"<delete_contact([^>]*)>(.*?)</delete_contact>", re.DOTALL | re.I)
+    SAVE_DRAFT_RE = re.compile(r"<save_draft([^>]*)>(.*?)</save_draft>", re.DOTALL | re.I)
+    EDIT_MESSAGE_RE = re.compile(r"<edit_message([^>]*)>(.*?)</edit_message>", re.DOTALL | re.I)
+    REPLY_MESSAGE_RE = re.compile(r"<reply_message([^>]*)>(.*?)</reply_message>", re.DOTALL | re.I)
+    REACT_MESSAGE_RE = re.compile(r"<react_message([^>]*)>(.*?)</react_message>", re.DOTALL | re.I)
+    TYPING_RE = re.compile(r"<typing([^>]*)>(.*?)</typing>", re.DOTALL | re.I)
+    GET_MESSAGE_RE = re.compile(r"<get_message([^>]*)>(.*?)</get_message>", re.DOTALL | re.I)
+    SET_CHAT_USERNAME_RE = re.compile(r"<set_chat_username([^>]*)>(.*?)</set_chat_username>", re.DOTALL | re.I)
+    SET_CHAT_PHOTO_RE = re.compile(r"<set_chat_photo([^>]*)>(.*?)</set_chat_photo>", re.DOTALL | re.I)
+    GET_CHAT_PHOTO_RE = re.compile(r"<get_chat_photo([^>]*)>(.*?)</get_chat_photo>", re.DOTALL | re.I)
+    SEARCH_DIALOGS_RE = re.compile(r"<search_dialogs([^>]*)>(.*?)</search_dialogs>", re.DOTALL | re.I)
+    GET_PERMISSIONS_RE = re.compile(r"<get_permissions([^>]*)>(.*?)</get_permissions>", re.DOTALL | re.I)
+    GET_COMMON_CHATS_RE = re.compile(r"<get_common_chats([^>]*)>(.*?)</get_common_chats>", re.DOTALL | re.I)
+    GET_PROFILE_PHOTOS_RE = re.compile(r"<get_profile_photos([^>]*)>(.*?)</get_profile_photos>", re.DOTALL | re.I)
+    SCHEDULE_MESSAGE_RE = re.compile(r"<schedule_message([^>]*)>(.*?)</schedule_message>", re.DOTALL | re.I)
 
     config = ModuleConfig(
         ConfigValue(
@@ -246,6 +331,30 @@ class OpenAgent(ModuleBase):
             validator=Integer(default=1, min=0, max=3),
         ),
         ConfigValue(
+            "account_tools_enabled",
+            True,
+            description="Allow the agent to edit profile/join chats/read/search messages",
+            validator=Boolean(default=True),
+        ),
+        ConfigValue(
+            "account_tool_steps",
+            5,
+            description="Maximum account-level tools per request",
+            validator=Integer(default=5, min=0, max=15),
+        ),
+        ConfigValue(
+            "chat_management_enabled",
+            True,
+            description="Allow the agent to manage chats: mute, ban, promote, title, slowmode",
+            validator=Boolean(default=True),
+        ),
+        ConfigValue(
+            "chat_management_steps",
+            5,
+            description="Maximum chat-management tools per request",
+            validator=Integer(default=5, min=0, max=15),
+        ),
+        ConfigValue(
             "media_max_bytes",
             8_000_000,
             description="Maximum replied media bytes sent to AI",
@@ -262,6 +371,30 @@ class OpenAgent(ModuleBase):
             10,
             description="How many user/assistant turns to remember per chat",
             validator=Integer(default=10, min=0, max=50),
+        ),
+        ConfigValue(
+            "response_header",
+            "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            description="Final response header template. Supports placeholders from placeholders field",
+            validator=String(default="🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}"),
+        ),
+        ConfigValue(
+            "thinking_template",
+            "{random}",
+            description="Thinking message template. Supports placeholders from placeholders field",
+            validator=String(default="{random}"),
+        ),
+        ConfigValue(
+            "random_strings",
+            "Thinking...\nДумаю...\nГенерирую...",
+            description="Random lines for {random}, one per line",
+            validator=String(default="Thinking...\nДумаю...\nГенерирую..."),
+        ),
+        ConfigValue(
+            "placeholders",
+            "",
+            description="Available OpenAgent placeholders (auto-generated)",
+            validator=String(default=""),
         ),
     )
 
@@ -292,11 +425,20 @@ class OpenAgent(ModuleBase):
             "create_chat_steps": 2,
             "create_bots_enabled": True,
             "create_bot_steps": 1,
+            "account_tools_enabled": True,
+            "account_tool_steps": 5,
+            "chat_management_enabled": True,
+            "chat_management_steps": 5,
             "media_max_bytes": 8_000_000,
             "context_enabled": True,
             "context_turns": 10,
+            "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            "thinking_template": "{random}",
+            "random_strings": "Thinking...\nДумаю...\nГенерирую...",
+            "placeholders": "",
         }
         config_dict = await self.kernel.get_module_config(self.name, defaults)
+        config_dict["placeholders"] = self._format_placeholders()
         provider = self._normalize_provider(str(config_dict.get("provider", "openai")))
         config_dict["provider"] = provider if provider in self.PROVIDERS else "openai"
         self.config.from_dict(config_dict)
@@ -337,8 +479,55 @@ class OpenAgent(ModuleBase):
         return self.PROVIDER_LABELS.get(self._provider(), "Custom")
 
     def _response_title(self, elapsed: float) -> str:
-        provider = html.escape(self._provider_label())
-        return f"🍇 <i>OpenAgent</i> | <b>🕐 {elapsed:.1f}s</b> | 🧧 {provider}"
+        return self._render_template(
+            str(self.config.get("response_header", ""))
+            or "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            elapsed=elapsed,
+        )
+
+    def _placeholder_values(self, *, elapsed: float | None = None) -> dict[str, str]:
+        random_lines = [
+            line.strip()
+            for line in str(self.config.get("random_strings", "") or "").splitlines()
+            if line.strip()
+        ]
+        random_value = random.choice(random_lines) if random_lines else "Thinking..."
+        return {
+            "provider": self._provider_label(),
+            "provider_key": self._provider(),
+            "model": self._model(),
+            "elapsed": f"{elapsed:.1f}" if elapsed is not None else "0.0",
+            "random": random_value,
+            "prefix": getattr(self.kernel, "custom_prefix", ".") or ".",
+            "time": time.strftime("%H:%M:%S"),
+            "date": time.strftime("%Y-%m-%d"),
+        }
+
+    def _render_template(self, template: str, *, elapsed: float | None = None) -> str:
+        values = self._placeholder_values(elapsed=elapsed)
+        result = template or ""
+        for key, value in values.items():
+            result = result.replace("{" + key + "}", str(value))
+        return result
+
+    def _thinking_text(self) -> str:
+        return self._render_template(
+            str(self.config.get("thinking_template", "") or "{random}")
+        )
+
+    def _format_placeholders(self) -> str:
+        return "\n".join(
+            [
+                "{provider} - Provider label",
+                "{provider_key} - Provider config key",
+                "{model} - Current model",
+                "{elapsed} - Generation time seconds",
+                "{random} - Random line from random_strings",
+                "{prefix} - Current command prefix",
+                "{time} - Current local time",
+                "{date} - Current local date",
+            ]
+        )
 
     def _remember_context(self, chat_id: int | None, prompt: str, answer: str) -> None:
         if not chat_id or not self.config["context_enabled"]:
@@ -464,6 +653,57 @@ class OpenAgent(ModuleBase):
                 "\n\nTelegram bot creation tool is available through BotFather. Use "
                 "<create_bot name=\"Display Name\" username=\"UniqueUsernameBot\">optional description</create_bot>. "
                 "The username must end with bot. Only use this when the user explicitly asks to create a Telegram bot."
+            )
+        if self.config["account_tools_enabled"]:
+            prompt += (
+                "\n\nMore Telegram account tools are available. "
+                "Use <history limit=\"20\" chat=\"current_or_username\">optional</history> to read recent messages. "
+                "Use <search_messages query=\"text\" chat=\"current_or_username\" limit=\"20\"></search_messages> to search messages. "
+                "Use <update_profile first_name=\"Name\" last_name=\"Last\" about=\"Bio\" username=\"username\"></update_profile> to edit my profile. "
+                "Use <set_profile_photo url=\"https://...\"></set_profile_photo> or avatar_reply=\"true\" to change my profile photo. "
+                "Use <join_chat>https://t.me/...</join_chat> to join a public channel/group or invite link. "
+                "Use <pin_message chat=\"current\" id=\"123\"></pin_message> to pin a message (or omit id to pin replied message). "
+                "Use <delete_messages chat=\"current\" ids=\"1,2,3\"></delete_messages> to delete messages. "
+                "Use <forward_message from=\"current\" to=\"@target\" id=\"123\"></forward_message> to forward a message. "
+                "Use <download_media path=\"openagent_downloads\">reply</download_media> to download replied media. "
+                "Use <send_file chat=\"current\" path=\"file.txt\">caption</send_file> to send a local file. "
+                "Only use profile/join tools when the user explicitly asks."
+            )
+        if self.config["chat_management_enabled"]:
+            prompt += (
+                "\n\nChat management tools are available. "
+                "Use <mute_user user=\"@user_or_id\" chat=\"current\" minutes=\"60\">reason</mute_user>, "
+                "<unmute_user user=\"@user_or_id\" chat=\"current\"></unmute_user>, "
+                "<ban_user user=\"@user_or_id\" chat=\"current\">reason</ban_user>, "
+                "<unban_user user=\"@user_or_id\" chat=\"current\"></unban_user>, "
+                "<kick_user user=\"@user_or_id\" chat=\"current\"></kick_user>, "
+                "<promote_user user=\"@user_or_id\" chat=\"current\" rank=\"Admin\"></promote_user>, "
+                "<demote_user user=\"@user_or_id\" chat=\"current\"></demote_user>, "
+                "<set_slowmode chat=\"current\" seconds=\"10\"></set_slowmode>, "
+                "<set_chat_title chat=\"current\">New title</set_chat_title>, "
+                "and <set_chat_about chat=\"current\">New description</set_chat_about>. "
+                "If user is omitted, use the replied message sender. Only use moderation/admin tools when explicitly requested."
+            )
+            prompt += (
+                " Extra utility tools: <get_me></get_me>, <get_entity>@user</get_entity>, "
+                "<get_admins chat=\"current\"></get_admins>, <export_invite chat=\"current\"></export_invite>, "
+                "<mark_read chat=\"current\"></mark_read>, <archive_dialog chat=\"@chat\"></archive_dialog>, "
+                "<unarchive_dialog chat=\"@chat\"></unarchive_dialog>, <leave_chat chat=\"@chat\"></leave_chat>, "
+                "<block_user user=\"@user\"></block_user>, <unblock_user user=\"@user\"></unblock_user>, "
+                "<add_contact user=\"@user\" first_name=\"Name\" phone=\"+1000\"></add_contact>, "
+                "<delete_contact user=\"@user\"></delete_contact>, <save_draft chat=\"@chat\">text</save_draft>, "
+                "<edit_message chat=\"current\" id=\"123\">text</edit_message>, "
+                "<reply_message chat=\"current\" id=\"123\">text</reply_message>, "
+                "<react_message chat=\"current\" id=\"123\">👍</react_message>, "
+                "<typing chat=\"current\" seconds=\"3\"></typing>, <get_message chat=\"current\" id=\"123\"></get_message>, "
+                "<set_chat_username chat=\"current\">public_username</set_chat_username>, "
+                "<set_chat_photo chat=\"current\" url=\"https://...\"></set_chat_photo>, "
+                "<get_chat_photo chat=\"current\" path=\"openagent_downloads\"></get_chat_photo>, "
+                "<search_dialogs query=\"name\" limit=\"20\"></search_dialogs>, "
+                "<get_permissions chat=\"current\" user=\"@user\"></get_permissions>, "
+                "<get_common_chats user=\"@user\" limit=\"20\"></get_common_chats>, "
+                "<get_profile_photos user=\"@user\" limit=\"3\" path=\"openagent_downloads\"></get_profile_photos>, "
+                "<schedule_message chat=\"current\" at=\"2026-01-01 12:00\">text</schedule_message>."
             )
         prompt += self._load_skills_prompt()
         prompt += (
@@ -1085,6 +1325,558 @@ class OpenAgent(ModuleBase):
 
         return f"Bot created: @{username}\nName: {name}\nToken: {token}"
 
+    async def _resolve_tool_chat(self, chat: str | None, source_event: Any | None) -> Any:
+        chat = (chat or "").strip()
+        if not chat or chat.lower() in {"current", "this", "here"}:
+            if source_event is not None and getattr(source_event, "chat_id", None) is not None:
+                return getattr(source_event, "chat_id")
+            return "me"
+        try:
+            return int(chat)
+        except ValueError:
+            return chat
+
+    async def _resolve_tool_user(self, user: str | None, source_event: Any | None) -> Any:
+        user = (user or "").strip()
+        if user:
+            try:
+                return int(user)
+            except ValueError:
+                return user
+        if source_event is not None:
+            reply = await source_event.get_reply_message()
+            if reply:
+                sender = await reply.get_sender()
+                if sender is not None:
+                    return sender
+        raise ValueError("user is required or reply to a user's message")
+
+    async def _history_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        lines = []
+        try:
+            async for msg in self.client.iter_messages(chat, limit=limit):
+                sender = await msg.get_sender()
+                name = self._format_sender_short(sender)
+                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
+                media = " [media]" if getattr(msg, "media", None) else ""
+                lines.append(f"#{msg.id} {name}: {text[:500]}{media}".strip())
+        except Exception as exc:
+            return f"Could not read history: {exc}"
+        return "\n".join(reversed(lines)) or "No messages found"
+
+    async def _search_messages_tool(
+        self, attrs_raw: str, body: str, source_event: Any | None
+    ) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        query = attrs.get("query") or body.strip()
+        if not query:
+            return "Search query is empty"
+        limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        lines = []
+        try:
+            async for msg in self.client.iter_messages(chat, search=query, limit=limit):
+                sender = await msg.get_sender()
+                name = self._format_sender_short(sender)
+                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
+                lines.append(f"#{msg.id} {name}: {text[:500]}")
+        except Exception as exc:
+            return f"Could not search messages: {exc}"
+        return "\n".join(lines) or "No messages found"
+
+    def _format_sender_short(self, sender: Any) -> str:
+        if sender is None:
+            return "Unknown"
+        username = f"@{sender.username}" if getattr(sender, "username", None) else ""
+        name = " ".join(
+            p
+            for p in (getattr(sender, "first_name", None), getattr(sender, "last_name", None))
+            if p
+        ) or getattr(sender, "title", None) or "Unknown"
+        return f"{name} {username}".strip()
+
+    async def _update_profile_tool(self, attrs_raw: str, body: str) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        first_name = attrs.get("first_name") or attrs.get("name")
+        last_name = attrs.get("last_name")
+        about = attrs.get("about") or attrs.get("bio") or body.strip() or None
+        username = attrs.get("username")
+        lines = []
+        try:
+            if first_name or last_name or about:
+                await self.client(
+                    UpdateProfileRequest(
+                        first_name=first_name,
+                        last_name=last_name,
+                        about=about,
+                    )
+                )
+                lines.append("profile updated")
+            if username:
+                await self.client(UpdateAccountUsernameRequest(username=username.lstrip("@")))
+                lines.append(f"username set: @{username.lstrip('@')}")
+        except Exception as exc:
+            return f"Could not update profile: {exc}"
+        return "\n".join(lines) or "Nothing to update"
+
+    async def _set_profile_photo_tool(
+        self, attrs_raw: str, source_event: Any | None
+    ) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        data: bytes | None = None
+        mime_type = "image/jpeg"
+        url = attrs.get("url") or attrs.get("avatar_url") or attrs.get("photo_url")
+        if url:
+            fetched = await self._fetch_url_bytes(url)
+            if fetched:
+                data, mime_type = fetched
+        elif source_event is not None and attrs.get("avatar_reply", "").lower() in {"1", "true", "yes"}:
+            reply = await source_event.get_reply_message()
+            if reply and getattr(reply, "media", None):
+                data = await reply.download_media(file=bytes)
+                file_obj = getattr(reply, "file", None)
+                mime_type = getattr(file_obj, "mime_type", None) or "image/jpeg"
+        if not data:
+            return "No photo data found"
+        if not mime_type.startswith("image/"):
+            return "Profile photo must be an image"
+        ext = mimetypes.guess_extension(mime_type) or ".jpg"
+        buf = io.BytesIO(data)
+        buf.name = f"profile{ext}"
+        try:
+            uploaded = await self.client.upload_file(buf)
+            await self.client(UploadProfilePhotoRequest(file=uploaded))
+        except Exception as exc:
+            return f"Could not set profile photo: {exc}"
+        return "profile photo updated"
+
+    async def _join_chat_tool(self, attrs_raw: str, body: str) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        target = attrs.get("chat") or attrs.get("url") or body.strip()
+        if not target:
+            return "Join target is empty"
+        target = target.strip()
+        try:
+            invite_match = re.search(r"(?:joinchat/|\+)([A-Za-z0-9_-]+)", target)
+            if invite_match:
+                result = await self.client(ImportChatInviteRequest(invite_match.group(1)))
+                return f"joined by invite: {getattr(result, 'chats', [])}"
+            entity = target.replace("https://t.me/", "").lstrip("@")
+            result = await self.client(JoinChannelRequest(entity))
+            return f"joined: {getattr(result, 'chats', [])}"
+        except Exception as exc:
+            return f"Could not join chat: {exc}"
+
+    async def _message_id_from_attrs(
+        self, attrs: dict[str, str], body: str, source_event: Any | None
+    ) -> int | None:
+        raw = attrs.get("id") or attrs.get("message_id") or body.strip()
+        if raw and raw.lower() not in {"reply", "replied"}:
+            try:
+                return int(raw.split(",")[0].strip())
+            except ValueError:
+                return None
+        if source_event is not None:
+            reply = await source_event.get_reply_message()
+            if reply:
+                return getattr(reply, "id", None)
+        return None
+
+    async def _pin_message_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        msg_id = await self._message_id_from_attrs(attrs, body, source_event)
+        if not msg_id:
+            return "Message id is required or reply to a message"
+        notify = attrs.get("notify", "false").lower() in {"1", "true", "yes"}
+        try:
+            await self.client.pin_message(chat, msg_id, notify=notify)
+        except Exception as exc:
+            return f"Could not pin message: {exc}"
+        return f"Pinned message {msg_id} in {chat}"
+
+    async def _delete_messages_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        raw_ids = attrs.get("ids") or attrs.get("id") or body.strip()
+        ids: list[int] = []
+        if raw_ids and raw_ids.lower() not in {"reply", "replied"}:
+            for part in re.split(r"[\s,]+", raw_ids):
+                if part.strip().isdigit():
+                    ids.append(int(part.strip()))
+        elif source_event is not None:
+            reply = await source_event.get_reply_message()
+            if reply:
+                ids.append(reply.id)
+        if not ids:
+            return "Message ids are required or reply to a message"
+        try:
+            result = await self.client.delete_messages(chat, ids)
+        except Exception as exc:
+            return f"Could not delete messages: {exc}"
+        return f"Delete requested for {len(ids)} message(s): {result}"
+
+    async def _forward_message_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        src = await self._resolve_tool_chat(attrs.get("from") or attrs.get("src"), source_event)
+        dst = await self._resolve_tool_chat(attrs.get("to") or attrs.get("dst") or body.strip(), source_event)
+        msg_id = await self._message_id_from_attrs(attrs, "", source_event)
+        if not msg_id:
+            return "Message id is required or reply to a message"
+        try:
+            sent = await self.client.forward_messages(dst, msg_id, from_peer=src)
+        except Exception as exc:
+            return f"Could not forward message: {exc}"
+        return f"Forwarded message {msg_id} to {dst}, new id={getattr(sent, 'id', None)}"
+
+    async def _download_media_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        if source_event is None:
+            return "No source event available"
+        reply = await source_event.get_reply_message()
+        if not reply or not getattr(reply, "media", None):
+            return "Reply to a media message first"
+        directory = Path(attrs.get("path") or body.strip() or "openagent_downloads")
+        if not directory.is_absolute():
+            directory = Path.cwd() / directory
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            path = await reply.download_media(file=str(directory))
+        except Exception as exc:
+            return f"Could not download media: {exc}"
+        return f"Media downloaded: {path}"
+
+    async def _send_file_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        path_raw = attrs.get("path") or attrs.get("file")
+        if not path_raw:
+            return "File path is required"
+        path = Path(path_raw).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        if not path.exists() or not path.is_file():
+            return f"File not found: {path}"
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        caption = body.strip() or attrs.get("caption") or None
+        try:
+            sent = await self.client.send_file(chat, str(path), caption=caption)
+        except Exception as exc:
+            return f"Could not send file: {exc}"
+        return f"File sent to {chat}, id={getattr(sent, 'id', None)}"
+
+    async def _mute_user_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        minutes = max(1, int(attrs.get("minutes", "60") or 60))
+        until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        try:
+            await self.client.edit_permissions(chat, user, until_date=until, send_messages=False)
+        except Exception as exc:
+            return f"Could not mute user: {exc}"
+        return f"Muted user for {minutes} minute(s). Reason: {body.strip() or 'not specified'}"
+
+    async def _unmute_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        try:
+            await self.client.edit_permissions(chat, user, send_messages=True)
+        except Exception as exc:
+            return f"Could not unmute user: {exc}"
+        return "User unmuted"
+
+    async def _ban_user_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        try:
+            await self.client.edit_permissions(chat, user, view_messages=False)
+        except Exception as exc:
+            return f"Could not ban user: {exc}"
+        return f"User banned. Reason: {body.strip() or 'not specified'}"
+
+    async def _unban_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        try:
+            await self.client.edit_permissions(chat, user, view_messages=True, send_messages=True)
+        except Exception as exc:
+            return f"Could not unban user: {exc}"
+        return "User unbanned"
+
+    async def _kick_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        try:
+            await self.client.kick_participant(chat, user)
+        except Exception as exc:
+            return f"Could not kick user: {exc}"
+        return "User kicked"
+
+    async def _promote_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        rank = attrs.get("rank") or "Admin"
+        rights = ChatAdminRights(
+            change_info=True,
+            delete_messages=True,
+            ban_users=True,
+            invite_users=True,
+            pin_messages=True,
+            manage_call=True,
+            manage_topics=True,
+        )
+        try:
+            await self.client(EditAdminRequest(channel=chat, user_id=user, admin_rights=rights, rank=rank[:16]))
+        except Exception as exc:
+            return f"Could not promote user: {exc}"
+        return f"User promoted with rank: {rank}"
+
+    async def _demote_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self._resolve_tool_user(attrs.get("user"), source_event)
+        rights = ChatAdminRights()
+        try:
+            await self.client(EditAdminRequest(channel=chat, user_id=user, admin_rights=rights, rank=""))
+        except Exception as exc:
+            return f"Could not demote user: {exc}"
+        return "User demoted"
+
+    async def _set_slowmode_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        seconds = int(attrs.get("seconds") or body.strip() or 0)
+        seconds = max(0, min(seconds, 3600))
+        try:
+            await self.client(ToggleSlowModeRequest(channel=chat, seconds=seconds))
+        except Exception as exc:
+            return f"Could not set slowmode: {exc}"
+        return f"Slowmode set to {seconds}s"
+
+    async def _set_chat_title_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        title = (attrs.get("title") or body.strip())[:128]
+        if not title:
+            return "Title is empty"
+        try:
+            await self.client(EditTitleRequest(channel=chat, title=title))
+        except Exception as exc:
+            return f"Could not set chat title: {exc}"
+        return f"Chat title set: {title}"
+
+    async def _set_chat_about_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        about = (attrs.get("about") or attrs.get("description") or body.strip())[:255]
+        try:
+            await self.client(EditChatAboutRequest(peer=chat, about=about))
+        except Exception as exc:
+            return f"Could not set chat about: {exc}"
+        return "Chat description updated"
+
+    async def _misc_tool(self, name: str, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        try:
+            if name == "search_dialogs":
+                query = (attrs.get("query") or body.strip()).lower()
+                limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
+                if not query:
+                    return "query is required"
+                lines = []
+                async for dialog in self.client.iter_dialogs(limit=300):
+                    entity = dialog.entity
+                    username = getattr(entity, "username", None) or ""
+                    title = getattr(dialog, "name", None) or getattr(entity, "title", None) or " ".join(
+                        p
+                        for p in (getattr(entity, "first_name", None), getattr(entity, "last_name", None))
+                        if p
+                    )
+                    haystack = f"{title} {username}".lower()
+                    if query in haystack:
+                        lines.append(f"{title} @{username} [id={getattr(entity, 'id', None)}]".strip())
+                    if len(lines) >= limit:
+                        break
+                return "\n".join(lines) or "No dialogs found"
+
+            if name == "get_permissions":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                user = await self._resolve_tool_user(attrs.get("user"), source_event)
+                perms = await self.client.get_permissions(chat, user)
+                return "\n".join(
+                    f"{key}: {value}"
+                    for key, value in sorted(vars(perms).items())
+                    if not key.startswith("_")
+                )[:4000]
+
+            if name == "get_common_chats":
+                user = await self._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
+                limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
+                chats = await self.client.get_common_chats(user, limit=limit)
+                lines = []
+                for chat in chats:
+                    title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "Unknown"
+                    username = f"@{chat.username}" if getattr(chat, "username", None) else ""
+                    lines.append(f"{title} {username} [id={getattr(chat, 'id', None)}]".strip())
+                return "\n".join(lines) or "No common chats found"
+
+            if name == "get_profile_photos":
+                user = await self._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
+                limit = max(1, min(int(attrs.get("limit", "3") or 3), 20))
+                directory = Path(attrs.get("path") or "openagent_downloads")
+                if not directory.is_absolute():
+                    directory = Path.cwd() / directory
+                directory.mkdir(parents=True, exist_ok=True)
+                photos = await self.client.get_profile_photos(user, limit=limit)
+                paths = []
+                for idx, photo in enumerate(photos, 1):
+                    path = await self.client.download_media(photo, file=str(directory / f"profile_photo_{idx}.jpg"))
+                    paths.append(str(path))
+                return "\n".join(paths) or "No profile photos found"
+
+            if name == "schedule_message":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                at_raw = attrs.get("at") or attrs.get("time")
+                if not at_raw:
+                    return "at/time attribute is required"
+                text = body.strip()
+                if not text:
+                    return "message text is empty"
+                at = datetime.fromisoformat(at_raw.replace("Z", "+00:00"))
+                if at.tzinfo is None:
+                    at = at.astimezone()
+                sent = await self.client.send_message(chat, text, schedule=at)
+                return f"Message scheduled to {chat} at {at.isoformat()}, id={getattr(sent, 'id', None)}"
+
+            if name == "get_me":
+                return self._format_entity_profile(await self.client.get_me())
+
+            if name == "get_entity":
+                target = attrs.get("target") or attrs.get("user") or attrs.get("chat") or body.strip()
+                if not target:
+                    return "target is required"
+                try:
+                    entity = await self.client.get_entity(int(target))
+                except ValueError:
+                    entity = await self.client.get_entity(target)
+                return self._format_entity_profile(entity)
+
+            if name == "get_admins":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                lines = []
+                async for user in self.client.iter_participants(chat, filter=ChannelParticipantsAdmins):
+                    lines.append(self._format_sender_short(user) + f" [id={getattr(user, 'id', None)}]")
+                return "\n".join(lines) or "No admins found"
+
+            if name == "export_invite":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                invite = await self.client(ExportChatInviteRequest(peer=chat, title=attrs.get("title") or "OpenAgent"))
+                return getattr(invite, "link", str(invite))
+
+            if name == "mark_read":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                await self.client.send_read_acknowledge(chat)
+                return "Marked as read"
+
+            if name in {"archive_dialog", "unarchive_dialog"}:
+                chat = await self._resolve_tool_chat(attrs.get("chat") or body.strip(), source_event)
+                await self.client.edit_folder(chat, 1 if name == "archive_dialog" else 0)
+                return "Dialog archived" if name == "archive_dialog" else "Dialog unarchived"
+
+            if name == "leave_chat":
+                chat = await self._resolve_tool_chat(attrs.get("chat") or body.strip(), source_event)
+                await self.client.delete_dialog(chat)
+                return f"Left/deleted dialog: {chat}"
+
+            if name in {"block_user", "unblock_user", "delete_contact"}:
+                user = await self._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
+                input_user = await self.client.get_input_entity(user)
+                if name == "block_user":
+                    await self.client(BlockRequest(input_user))
+                    return "User blocked"
+                if name == "unblock_user":
+                    await self.client(UnblockRequest(input_user))
+                    return "User unblocked"
+                await self.client(DeleteContactsRequest([input_user]))
+                return "Contact deleted"
+
+            if name == "add_contact":
+                user = await self._resolve_tool_user(attrs.get("user"), source_event)
+                input_user = await self.client.get_input_entity(user)
+                await self.client(
+                    AddContactRequest(
+                        id=input_user,
+                        first_name=attrs.get("first_name") or attrs.get("name") or "Contact",
+                        last_name=attrs.get("last_name") or "",
+                        phone=attrs.get("phone") or "",
+                    )
+                )
+                return "Contact added"
+
+            if name == "save_draft":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                await self.client(SaveDraftRequest(peer=chat, message=body.strip()))
+                return "Draft saved"
+
+            if name in {"edit_message", "reply_message", "react_message", "get_message"}:
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                msg_id = await self._message_id_from_attrs(attrs, "", source_event)
+                if not msg_id:
+                    return "message id is required or reply to a message"
+                if name == "edit_message":
+                    await self.client.edit_message(chat, msg_id, body.strip())
+                    return "Message edited"
+                if name == "reply_message":
+                    sent = await self.client.send_message(chat, body.strip(), reply_to=msg_id)
+                    return f"Reply sent, id={getattr(sent, 'id', None)}"
+                if name == "react_message":
+                    if not hasattr(self.client, "send_reaction"):
+                        return "send_reaction is not available"
+                    await self.client.send_reaction(chat, msg_id, reaction=(body.strip() or attrs.get("reaction") or "👍"))
+                    return "Reaction sent"
+                msg = await self.client.get_messages(chat, ids=msg_id)
+                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
+                return f"#{msg_id}: {text[:3000]}"
+
+            if name == "typing":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                seconds = max(1, min(int(attrs.get("seconds", "3") or 3), 15))
+                async with self.client.action(chat, "typing"):
+                    await asyncio.sleep(seconds)
+                return f"Typing action shown for {seconds}s"
+
+            if name == "set_chat_username":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                username = (attrs.get("username") or body.strip()).lstrip("@")
+                await self.client(UpdateUsernameRequest(channel=chat, username=username))
+                return f"Chat username set: @{username}"
+
+            if name == "set_chat_photo":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                result = await self._set_channel_avatar(chat, attrs, source_event)
+                return result or "No photo data found"
+
+            if name == "get_chat_photo":
+                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+                directory = Path(attrs.get("path") or "openagent_downloads")
+                if not directory.is_absolute():
+                    directory = Path.cwd() / directory
+                directory.mkdir(parents=True, exist_ok=True)
+                path = await self.client.download_profile_photo(chat, file=str(directory))
+                return f"Chat photo downloaded: {path}"
+
+        except Exception as exc:
+            return f"{name} failed: {exc}"
+        return f"Unknown tool: {name}"
+
     async def _show_agent_action(
         self,
         event: Any,
@@ -1157,8 +1949,18 @@ class OpenAgent(ModuleBase):
             if self.config["create_bots_enabled"]
             else 0
         )
+        account_tool_steps = (
+            int(self.config["account_tool_steps"])
+            if self.config["account_tools_enabled"]
+            else 0
+        )
+        chat_management_steps = (
+            int(self.config["chat_management_steps"])
+            if self.config["chat_management_enabled"]
+            else 0
+        )
         agent_log: list[str] = []
-        max_steps = terminal_steps + search_steps + mcub_steps + send_steps + create_chat_steps + create_bot_steps + 6
+        max_steps = terminal_steps + search_steps + mcub_steps + send_steps + create_chat_steps + create_bot_steps + account_tool_steps + chat_management_steps + 6
 
         for _ in range(max_steps):
             if cancel_token and cancel_token in self._cancelled_generations:
@@ -1184,6 +1986,54 @@ class OpenAgent(ModuleBase):
             create_channel_match = self.CREATE_CHANNEL_RE.search(answer or "")
             create_group_match = self.CREATE_GROUP_RE.search(answer or "")
             create_bot_match = self.CREATE_BOT_RE.search(answer or "")
+            history_match = self.HISTORY_RE.search(answer or "")
+            search_messages_match = self.SEARCH_MESSAGES_RE.search(answer or "")
+            update_profile_match = self.UPDATE_PROFILE_RE.search(answer or "")
+            set_profile_photo_match = self.SET_PROFILE_PHOTO_RE.search(answer or "")
+            join_chat_match = self.JOIN_CHAT_RE.search(answer or "")
+            pin_message_match = self.PIN_MESSAGE_RE.search(answer or "")
+            delete_messages_match = self.DELETE_MESSAGES_RE.search(answer or "")
+            forward_message_match = self.FORWARD_MESSAGE_RE.search(answer or "")
+            download_media_match = self.DOWNLOAD_MEDIA_RE.search(answer or "")
+            send_file_match = self.SEND_FILE_RE.search(answer or "")
+            mute_user_match = self.MUTE_USER_RE.search(answer or "")
+            unmute_user_match = self.UNMUTE_USER_RE.search(answer or "")
+            ban_user_match = self.BAN_USER_RE.search(answer or "")
+            unban_user_match = self.UNBAN_USER_RE.search(answer or "")
+            kick_user_match = self.KICK_USER_RE.search(answer or "")
+            promote_user_match = self.PROMOTE_USER_RE.search(answer or "")
+            demote_user_match = self.DEMOTE_USER_RE.search(answer or "")
+            set_slowmode_match = self.SET_SLOWMODE_RE.search(answer or "")
+            set_chat_title_match = self.SET_CHAT_TITLE_RE.search(answer or "")
+            set_chat_about_match = self.SET_CHAT_ABOUT_RE.search(answer or "")
+            misc_tool_matches = [
+                ("get_me", self.GET_ME_RE.search(answer or "")),
+                ("get_entity", self.GET_ENTITY_RE.search(answer or "")),
+                ("get_admins", self.GET_ADMINS_RE.search(answer or "")),
+                ("export_invite", self.EXPORT_INVITE_RE.search(answer or "")),
+                ("mark_read", self.MARK_READ_RE.search(answer or "")),
+                ("archive_dialog", self.ARCHIVE_DIALOG_RE.search(answer or "")),
+                ("unarchive_dialog", self.UNARCHIVE_DIALOG_RE.search(answer or "")),
+                ("leave_chat", self.LEAVE_CHAT_RE.search(answer or "")),
+                ("block_user", self.BLOCK_USER_RE.search(answer or "")),
+                ("unblock_user", self.UNBLOCK_USER_RE.search(answer or "")),
+                ("add_contact", self.ADD_CONTACT_RE.search(answer or "")),
+                ("delete_contact", self.DELETE_CONTACT_RE.search(answer or "")),
+                ("save_draft", self.SAVE_DRAFT_RE.search(answer or "")),
+                ("edit_message", self.EDIT_MESSAGE_RE.search(answer or "")),
+                ("reply_message", self.REPLY_MESSAGE_RE.search(answer or "")),
+                ("react_message", self.REACT_MESSAGE_RE.search(answer or "")),
+                ("typing", self.TYPING_RE.search(answer or "")),
+                ("get_message", self.GET_MESSAGE_RE.search(answer or "")),
+                ("set_chat_username", self.SET_CHAT_USERNAME_RE.search(answer or "")),
+                ("set_chat_photo", self.SET_CHAT_PHOTO_RE.search(answer or "")),
+                ("get_chat_photo", self.GET_CHAT_PHOTO_RE.search(answer or "")),
+                ("search_dialogs", self.SEARCH_DIALOGS_RE.search(answer or "")),
+                ("get_permissions", self.GET_PERMISSIONS_RE.search(answer or "")),
+                ("get_common_chats", self.GET_COMMON_CHATS_RE.search(answer or "")),
+                ("get_profile_photos", self.GET_PROFILE_PHOTOS_RE.search(answer or "")),
+                ("schedule_message", self.SCHEDULE_MESSAGE_RE.search(answer or "")),
+            ]
             if terminal_match and terminal_steps > 0:
                 command = terminal_match.group(1).strip()
                 agent_log.append(f"terminal: {command}")
@@ -1384,6 +2234,165 @@ class OpenAgent(ModuleBase):
                 create_bot_steps -= 1
                 continue
 
+            if history_match and account_tool_steps > 0:
+                attrs_raw, _body = history_match.groups()
+                agent_log.append("history")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Reading history...", attrs_raw, agent_log)
+                output = await self._history_tool(attrs_raw, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"History tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if search_messages_match and account_tool_steps > 0:
+                attrs_raw, body = search_messages_match.groups()
+                agent_log.append("search_messages")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Searching messages...", attrs_raw or body, agent_log)
+                output = await self._search_messages_tool(attrs_raw, body, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Message search tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if update_profile_match and account_tool_steps > 0:
+                attrs_raw, body = update_profile_match.groups()
+                agent_log.append("update_profile")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Updating profile...", attrs_raw or body, agent_log)
+                output = await self._update_profile_tool(attrs_raw, body)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Profile update tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if set_profile_photo_match and account_tool_steps > 0:
+                attrs_raw, _body = set_profile_photo_match.groups()
+                agent_log.append("set_profile_photo")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Setting profile photo...", attrs_raw, agent_log)
+                output = await self._set_profile_photo_tool(attrs_raw, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Profile photo tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if join_chat_match and account_tool_steps > 0:
+                attrs_raw, body = join_chat_match.groups()
+                agent_log.append("join_chat")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Joining chat...", attrs_raw or body, agent_log)
+                output = await self._join_chat_tool(attrs_raw, body)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Join chat tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if pin_message_match and account_tool_steps > 0:
+                attrs_raw, body = pin_message_match.groups()
+                agent_log.append("pin_message")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Pinning message...", attrs_raw or body, agent_log)
+                output = await self._pin_message_tool(attrs_raw, body, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Pin message tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if delete_messages_match and account_tool_steps > 0:
+                attrs_raw, body = delete_messages_match.groups()
+                agent_log.append("delete_messages")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Deleting messages...", attrs_raw or body, agent_log)
+                output = await self._delete_messages_tool(attrs_raw, body, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Delete messages tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if forward_message_match and account_tool_steps > 0:
+                attrs_raw, body = forward_message_match.groups()
+                agent_log.append("forward_message")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Forwarding message...", attrs_raw or body, agent_log)
+                output = await self._forward_message_tool(attrs_raw, body, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Forward message tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if download_media_match and account_tool_steps > 0:
+                attrs_raw, body = download_media_match.groups()
+                agent_log.append("download_media")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Downloading media...", attrs_raw or body, agent_log)
+                output = await self._download_media_tool(attrs_raw, body, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Download media tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            if send_file_match and account_tool_steps > 0:
+                attrs_raw, body = send_file_match.groups()
+                agent_log.append("send_file")
+                if status_event is not None:
+                    await self._show_agent_action(status_event, "Sending file...", attrs_raw or body, agent_log)
+                output = await self._send_file_tool(attrs_raw, body, source_event)
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "user", "content": f"Send file tool executed:\n{output}"})
+                account_tool_steps -= 1
+                continue
+
+            chat_tool_specs = [
+                (mute_user_match, "mute_user", "Muting user...", lambda a, b: self._mute_user_tool(a, b, source_event)),
+                (unmute_user_match, "unmute_user", "Unmuting user...", lambda a, _b: self._unmute_user_tool(a, source_event)),
+                (ban_user_match, "ban_user", "Banning user...", lambda a, b: self._ban_user_tool(a, b, source_event)),
+                (unban_user_match, "unban_user", "Unbanning user...", lambda a, _b: self._unban_user_tool(a, source_event)),
+                (kick_user_match, "kick_user", "Kicking user...", lambda a, _b: self._kick_user_tool(a, source_event)),
+                (promote_user_match, "promote_user", "Promoting user...", lambda a, _b: self._promote_user_tool(a, source_event)),
+                (demote_user_match, "demote_user", "Demoting user...", lambda a, _b: self._demote_user_tool(a, source_event)),
+                (set_slowmode_match, "set_slowmode", "Setting slowmode...", lambda a, b: self._set_slowmode_tool(a, b, source_event)),
+                (set_chat_title_match, "set_chat_title", "Setting chat title...", lambda a, b: self._set_chat_title_tool(a, b, source_event)),
+                (set_chat_about_match, "set_chat_about", "Setting chat description...", lambda a, b: self._set_chat_about_tool(a, b, source_event)),
+            ]
+            handled_chat_tool = False
+            for match, log_name, status_title, handler in chat_tool_specs:
+                if match and chat_management_steps > 0:
+                    attrs_raw, body = match.groups()
+                    agent_log.append(log_name)
+                    if status_event is not None:
+                        await self._show_agent_action(status_event, status_title, attrs_raw or body, agent_log)
+                    output = await handler(attrs_raw, body)
+                    messages.append({"role": "assistant", "content": answer})
+                    messages.append({"role": "user", "content": f"{log_name} tool executed:\n{output}"})
+                    chat_management_steps -= 1
+                    handled_chat_tool = True
+                    break
+            if handled_chat_tool:
+                continue
+
+            handled_misc_tool = False
+            for tool_name, match in misc_tool_matches:
+                if match and account_tool_steps > 0:
+                    attrs_raw, body = match.groups()
+                    agent_log.append(tool_name)
+                    if status_event is not None:
+                        await self._show_agent_action(
+                            status_event,
+                            f"Running {tool_name}...",
+                            attrs_raw or body,
+                            agent_log,
+                        )
+                    output = await self._misc_tool(tool_name, attrs_raw, body, source_event)
+                    messages.append({"role": "assistant", "content": answer})
+                    messages.append({"role": "user", "content": f"{tool_name} tool executed:\n{output}"})
+                    account_tool_steps -= 1
+                    handled_misc_tool = True
+                    break
+            if handled_misc_tool:
+                continue
+
             clean_answer = self.TERMINAL_RE.sub("", answer or "")
             clean_answer = self.WEB_SEARCH_RE.sub("", clean_answer).strip()
             clean_answer = self.MCUB_RE.sub("", clean_answer).strip()
@@ -1395,6 +2404,55 @@ class OpenAgent(ModuleBase):
             clean_answer = self.CREATE_CHANNEL_RE.sub("", clean_answer).strip()
             clean_answer = self.CREATE_GROUP_RE.sub("", clean_answer).strip()
             clean_answer = self.CREATE_BOT_RE.sub("", clean_answer).strip()
+            clean_answer = self.HISTORY_RE.sub("", clean_answer).strip()
+            clean_answer = self.SEARCH_MESSAGES_RE.sub("", clean_answer).strip()
+            clean_answer = self.UPDATE_PROFILE_RE.sub("", clean_answer).strip()
+            clean_answer = self.SET_PROFILE_PHOTO_RE.sub("", clean_answer).strip()
+            clean_answer = self.JOIN_CHAT_RE.sub("", clean_answer).strip()
+            clean_answer = self.PIN_MESSAGE_RE.sub("", clean_answer).strip()
+            clean_answer = self.DELETE_MESSAGES_RE.sub("", clean_answer).strip()
+            clean_answer = self.FORWARD_MESSAGE_RE.sub("", clean_answer).strip()
+            clean_answer = self.DOWNLOAD_MEDIA_RE.sub("", clean_answer).strip()
+            clean_answer = self.SEND_FILE_RE.sub("", clean_answer).strip()
+            clean_answer = self.MUTE_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.UNMUTE_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.BAN_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.UNBAN_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.KICK_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.PROMOTE_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.DEMOTE_USER_RE.sub("", clean_answer).strip()
+            clean_answer = self.SET_SLOWMODE_RE.sub("", clean_answer).strip()
+            clean_answer = self.SET_CHAT_TITLE_RE.sub("", clean_answer).strip()
+            clean_answer = self.SET_CHAT_ABOUT_RE.sub("", clean_answer).strip()
+            for regex in (
+                self.GET_ME_RE,
+                self.GET_ENTITY_RE,
+                self.GET_ADMINS_RE,
+                self.EXPORT_INVITE_RE,
+                self.MARK_READ_RE,
+                self.ARCHIVE_DIALOG_RE,
+                self.UNARCHIVE_DIALOG_RE,
+                self.LEAVE_CHAT_RE,
+                self.BLOCK_USER_RE,
+                self.UNBLOCK_USER_RE,
+                self.ADD_CONTACT_RE,
+                self.DELETE_CONTACT_RE,
+                self.SAVE_DRAFT_RE,
+                self.EDIT_MESSAGE_RE,
+                self.REPLY_MESSAGE_RE,
+                self.REACT_MESSAGE_RE,
+                self.TYPING_RE,
+                self.GET_MESSAGE_RE,
+                self.SET_CHAT_USERNAME_RE,
+                self.SET_CHAT_PHOTO_RE,
+                self.GET_CHAT_PHOTO_RE,
+                self.SEARCH_DIALOGS_RE,
+                self.GET_PERMISSIONS_RE,
+                self.GET_COMMON_CHATS_RE,
+                self.GET_PROFILE_PHOTOS_RE,
+                self.SCHEDULE_MESSAGE_RE,
+            ):
+                clean_answer = regex.sub("", clean_answer).strip()
             return clean_answer, agent_log
 
         clean_answer = self.TERMINAL_RE.sub("", answer or "")
@@ -1408,6 +2466,55 @@ class OpenAgent(ModuleBase):
         clean_answer = self.CREATE_CHANNEL_RE.sub("", clean_answer).strip()
         clean_answer = self.CREATE_GROUP_RE.sub("", clean_answer).strip()
         clean_answer = self.CREATE_BOT_RE.sub("", clean_answer).strip()
+        clean_answer = self.HISTORY_RE.sub("", clean_answer).strip()
+        clean_answer = self.SEARCH_MESSAGES_RE.sub("", clean_answer).strip()
+        clean_answer = self.UPDATE_PROFILE_RE.sub("", clean_answer).strip()
+        clean_answer = self.SET_PROFILE_PHOTO_RE.sub("", clean_answer).strip()
+        clean_answer = self.JOIN_CHAT_RE.sub("", clean_answer).strip()
+        clean_answer = self.PIN_MESSAGE_RE.sub("", clean_answer).strip()
+        clean_answer = self.DELETE_MESSAGES_RE.sub("", clean_answer).strip()
+        clean_answer = self.FORWARD_MESSAGE_RE.sub("", clean_answer).strip()
+        clean_answer = self.DOWNLOAD_MEDIA_RE.sub("", clean_answer).strip()
+        clean_answer = self.SEND_FILE_RE.sub("", clean_answer).strip()
+        clean_answer = self.MUTE_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.UNMUTE_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.BAN_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.UNBAN_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.KICK_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.PROMOTE_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.DEMOTE_USER_RE.sub("", clean_answer).strip()
+        clean_answer = self.SET_SLOWMODE_RE.sub("", clean_answer).strip()
+        clean_answer = self.SET_CHAT_TITLE_RE.sub("", clean_answer).strip()
+        clean_answer = self.SET_CHAT_ABOUT_RE.sub("", clean_answer).strip()
+        for regex in (
+            self.GET_ME_RE,
+            self.GET_ENTITY_RE,
+            self.GET_ADMINS_RE,
+            self.EXPORT_INVITE_RE,
+            self.MARK_READ_RE,
+            self.ARCHIVE_DIALOG_RE,
+            self.UNARCHIVE_DIALOG_RE,
+            self.LEAVE_CHAT_RE,
+            self.BLOCK_USER_RE,
+            self.UNBLOCK_USER_RE,
+            self.ADD_CONTACT_RE,
+            self.DELETE_CONTACT_RE,
+            self.SAVE_DRAFT_RE,
+            self.EDIT_MESSAGE_RE,
+            self.REPLY_MESSAGE_RE,
+            self.REACT_MESSAGE_RE,
+            self.TYPING_RE,
+            self.GET_MESSAGE_RE,
+            self.SET_CHAT_USERNAME_RE,
+            self.SET_CHAT_PHOTO_RE,
+            self.GET_CHAT_PHOTO_RE,
+            self.SEARCH_DIALOGS_RE,
+            self.GET_PERMISSIONS_RE,
+            self.GET_COMMON_CHATS_RE,
+            self.GET_PROFILE_PHOTOS_RE,
+            self.SCHEDULE_MESSAGE_RE,
+        ):
+            clean_answer = regex.sub("", clean_answer).strip()
         return clean_answer, agent_log
 
     def _agent_log_html(self, log: list[str]) -> str:
@@ -1694,7 +2801,7 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self.Button.inline("Отмена", self._cancel_generation, args=(cancel_token,))
         try:
-            loading = await event.edit(self.strings["thinking"], buttons=[[cancel_button]])
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
             loading = event
 
@@ -1755,9 +2862,9 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self.Button.inline("Отмена", self._cancel_generation, args=(cancel_token,))
         try:
-            loading = await event.edit(self.strings["thinking"], buttons=[[cancel_button]])
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
-            loading = await self.edit(event, self.strings["thinking"])
+            loading = await self.edit(event, self._thinking_text())
         started = time.monotonic()
         try:
             answer, agent_log = await self._ask_agent(
