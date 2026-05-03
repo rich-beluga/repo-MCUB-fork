@@ -2,13 +2,18 @@
 # scop: kernel min v1.3.0
 # repo: https://github.com/hairpin01/repo-MCUB-fork/
 # -- end --
-# scop: inline
 # SPDX-License-Identifier: MIT
+# author: @dev_dolbaeb
+# version: 0.4.1
+# description: AI agent inside MCUB userbot
+# requires: aiohttp
+# scop: inline
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import html
 import io
 import mimetypes
@@ -23,7 +28,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 import aiohttp
-from telethon import events
+from telethon import Button, events
 from telethon.tl.functions.account import (
     UpdateProfileRequest,
     UpdateUsernameRequest as UpdateAccountUsernameRequest,
@@ -50,6 +55,7 @@ from telethon.tl.functions.messages import (
     SaveDraftRequest,
 )
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
+from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import ChannelParticipantsAdmins, ChatAdminRights
 
 from core.lib.loader.module_base import ModuleBase, command
@@ -67,11 +73,11 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.0"
+    version = "0.4.1"
     author = "@dev_dolbaeb"
     description = {
-        "ru": "ИИ агент в юзерботе с доступом к терминалу",
-        "en": "AI agent in userbot with terminal access",
+        "ru": "ИИ агент в юзерботе с 50+ инструментами",
+        "en": "AI agent in userbot with 50+ tools",
     }
 
     strings = {
@@ -451,7 +457,20 @@ class OpenAgent(ModuleBase):
         self._chat_history: dict[int, list[dict[str, str]]] = {}
         self._cancelled_generations: set[str] = set()
         self._regen_payloads: dict[str, dict[str, Any]] = {}
+        self._direct_callback_payloads: dict[str, dict[str, Any]] = {}
+        self._direct_callback_handler = self._handle_direct_callback
+        self.client.add_event_handler(
+            self._direct_callback_handler,
+            events.CallbackQuery(pattern=b"^oa:"),
+        )
         self.log.info("OpenAgent loaded")
+
+    async def on_unload(self) -> None:
+        handler = getattr(self, "_direct_callback_handler", None)
+        if handler is not None:
+            with contextlib.suppress(Exception):
+                self.client.remove_event_handler(handler)
+        await super().on_unload()
 
     def _provider(self) -> str:
         provider = str(self.config.get("provider", "openai")).lower().strip()
@@ -739,12 +758,81 @@ class OpenAgent(ModuleBase):
             f"Name: {name}\n"
             f"Username: {username}\n"
             f"ID: {getattr(entity, 'id', None)}\n"
+            f"Access hash: {getattr(entity, 'access_hash', None)}\n"
             f"Bot: {getattr(entity, 'bot', None)}\n"
             f"Verified: {getattr(entity, 'verified', None)}\n"
             f"Premium: {getattr(entity, 'premium', None)}\n"
             f"Scam: {getattr(entity, 'scam', None)}\n"
-            f"Fake: {getattr(entity, 'fake', None)}"
+            f"Fake: {getattr(entity, 'fake', None)}\n"
+            f"Deleted: {getattr(entity, 'deleted', None)}\n"
+            f"Contact: {getattr(entity, 'contact', None)}\n"
+            f"Mutual contact: {getattr(entity, 'mutual_contact', None)}\n"
+            f"Restricted: {getattr(entity, 'restricted', None)}\n"
+            f"Support: {getattr(entity, 'support', None)}\n"
+            f"Bot chat history: {getattr(entity, 'bot_chat_history', None)}\n"
+            f"Bot no chats: {getattr(entity, 'bot_nochats', None)}\n"
+            f"Language code: {getattr(entity, 'lang_code', None)}\n"
+            f"Phone visible: {'yes' if getattr(entity, 'phone', None) else 'no'}\n"
+            f"Photo object: {getattr(entity, 'photo', None)}\n"
+            f"Emoji status: {getattr(entity, 'emoji_status', None)}"
         )
+
+    async def _format_full_profile(self, entity: Any) -> str:
+        lines = [self._format_entity_profile(entity)]
+        try:
+            full = await self.client(GetFullUserRequest(entity))
+            full_user = getattr(full, "full_user", None)
+            if full_user is not None:
+                lines.append(
+                    "Full profile:\n"
+                    f"About: {getattr(full_user, 'about', None)}\n"
+                    f"Common chats count: {getattr(full_user, 'common_chats_count', None)}\n"
+                    f"Blocked: {getattr(full_user, 'blocked', None)}\n"
+                    f"Phone calls available: {getattr(full_user, 'phone_calls_available', None)}\n"
+                    f"Video calls available: {getattr(full_user, 'video_calls_available', None)}\n"
+                    f"Voice messages forbidden: {getattr(full_user, 'voice_messages_forbidden', None)}\n"
+                    f"Stories pinned available: {getattr(full_user, 'stories_pinned_available', None)}\n"
+                    f"Profile photo: {getattr(full_user, 'profile_photo', None)}"
+                )
+        except Exception as exc:
+            lines.append(f"Full profile unavailable: {exc}")
+
+        try:
+            photos = await self.client.get_profile_photos(entity, limit=1)
+            lines.append(f"Profile photos count fetched: {len(photos)}")
+        except Exception as exc:
+            lines.append(f"Profile photos unavailable: {exc}")
+
+        try:
+            directory = Path.cwd() / "openagent_profiles"
+            directory.mkdir(parents=True, exist_ok=True)
+            path = await self.client.download_profile_photo(
+                entity,
+                file=str(directory / f"profile_{getattr(entity, 'id', 'unknown')}.jpg"),
+            )
+            if path:
+                lines.append(
+                    "Avatar: Telegram does not expose a permanent public avatar URL via client API.\n"
+                    f"Avatar local file: {path}"
+                )
+            else:
+                lines.append("Avatar: no accessible profile photo")
+        except Exception as exc:
+            lines.append(f"Avatar download failed: {exc}")
+
+        try:
+            common = await self.client.get_common_chats(entity, limit=10)
+            if common:
+                formatted = []
+                for chat in common:
+                    title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "Unknown"
+                    username = f"@{chat.username}" if getattr(chat, "username", None) else ""
+                    formatted.append(f"{title} {username} [id={getattr(chat, 'id', None)}]".strip())
+                lines.append("Common chats:\n" + "\n".join(formatted))
+        except Exception:
+            pass
+
+        return "\n\n".join(lines)
 
     async def _run_terminal(self, command: str) -> str:
         proc = await asyncio.create_subprocess_shell(
@@ -1190,11 +1278,7 @@ class OpenAgent(ModuleBase):
         except Exception as exc:
             return f"Could not resolve profile: {exc}"
 
-        username = f"@{entity.username}" if getattr(entity, "username", None) else ""
-        name = " ".join(
-            p for p in (getattr(entity, "first_name", None), getattr(entity, "last_name", None)) if p
-        ) or getattr(entity, "title", None) or "Unknown"
-        return self._format_entity_profile(entity)
+        return await self._format_full_profile(entity)
 
     async def _send_userbot_message(
         self,
@@ -1800,7 +1884,7 @@ class OpenAgent(ModuleBase):
                 return f"Message scheduled to {chat} at {at.isoformat()}, id={getattr(sent, 'id', None)}"
 
             if name == "get_me":
-                return self._format_entity_profile(await self.client.get_me())
+                return await self._format_full_profile(await self.client.get_me())
 
             if name == "get_entity":
                 target = attrs.get("target") or attrs.get("user") or attrs.get("chat") or body.strip()
@@ -1810,7 +1894,7 @@ class OpenAgent(ModuleBase):
                     entity = await self.client.get_entity(int(target))
                 except ValueError:
                     entity = await self.client.get_entity(target)
-                return self._format_entity_profile(entity)
+                return await self._format_full_profile(entity)
 
             if name == "get_admins":
                 chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
@@ -2796,6 +2880,49 @@ class OpenAgent(ModuleBase):
         except Exception:
             pass
 
+    def _direct_button(self, text: str, kind: str, payload: dict[str, Any]) -> Any:
+        token = uuid.uuid4().hex
+        self._direct_callback_payloads[token] = {
+            "kind": kind,
+            "payload": payload,
+            "created_at": time.time(),
+        }
+        if len(self._direct_callback_payloads) > 100:
+            stale = sorted(
+                self._direct_callback_payloads,
+                key=lambda key: self._direct_callback_payloads[key].get("created_at", 0),
+            )[:-100]
+            for key in stale:
+                self._direct_callback_payloads.pop(key, None)
+        return Button.inline(text, f"oa:{token}".encode())
+
+    async def _handle_direct_callback(self, event: Any) -> None:
+        data = getattr(event, "data", b"")
+        if isinstance(data, bytes):
+            data = data.decode("utf-8", errors="replace")
+        data = str(data or "")
+        if not data.startswith("oa:"):
+            return
+        token = data.split(":", 1)[1]
+        entry = self._direct_callback_payloads.get(token)
+        if not entry:
+            with contextlib.suppress(Exception):
+                await event.answer("Кнопка устарела", alert=True)
+            return
+        kind = entry.get("kind")
+        payload = entry.get("payload") or {}
+        if kind == "cancel":
+            await self._cancel_generation(event, payload.get("token", ""))
+            return
+        if kind == "clear":
+            await self._clear_context(event, payload.get("chat_id"))
+            return
+        if kind == "regen":
+            await self._regenerate_response(event, payload.get("token", ""))
+            return
+        with contextlib.suppress(Exception):
+            await event.answer("Unknown OpenAgent action", alert=True)
+
     def _final_buttons(
         self,
         chat_id: int | None,
@@ -2818,16 +2945,8 @@ class OpenAgent(ModuleBase):
             )[:-50]
             for key in stale:
                 self._regen_payloads.pop(key, None)
-        clear_button = self.Button.inline(
-            "Очистить",
-            self._clear_context,
-            args=(chat_id,),
-        )
-        regen_button = self.Button.inline(
-            "Регенерировать",
-            self._regenerate_response,
-            args=(regen_token,),
-        )
+        clear_button = self._direct_button("Очистить", "clear", {"chat_id": chat_id})
+        regen_button = self._direct_button("Регенерировать", "regen", {"token": regen_token})
         return [[clear_button, regen_button]]
 
     async def _regenerate_response(self, event: Any, token: str) -> None:
@@ -2845,7 +2964,7 @@ class OpenAgent(ModuleBase):
             pass
 
         cancel_token = str(uuid.uuid4())
-        cancel_button = self.Button.inline("Отмена", self._cancel_generation, args=(cancel_token,))
+        cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
             loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
@@ -2906,7 +3025,7 @@ class OpenAgent(ModuleBase):
             full_prompt += f"\n\nReply context:\n{reply_context}"
 
         cancel_token = str(uuid.uuid4())
-        cancel_button = self.Button.inline("Отмена", self._cancel_generation, args=(cancel_token,))
+        cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
             loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
@@ -2965,7 +3084,7 @@ class OpenAgent(ModuleBase):
             "Do not invent commands; if unsure, use available tools like history/search/terminal to inspect docs or modules."
         )
         cancel_token = str(uuid.uuid4())
-        cancel_button = self.Button.inline("Отмена", self._cancel_generation, args=(cancel_token,))
+        cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
             loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
@@ -3079,4 +3198,3 @@ class OpenAgent(ModuleBase):
             return
         path.unlink()
         await self.edit(event, f"Skill deleted: <code>{html.escape(path.stem)}</code>", as_html=True)
-
