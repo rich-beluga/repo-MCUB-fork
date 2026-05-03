@@ -386,6 +386,18 @@ class OpenAgent(ModuleBase):
             validator=String(default="🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}"),
         ),
         ConfigValue(
+            "request_label",
+            "<b>📝 Запрос:</b>",
+            description="Request block label template. Supports placeholders from placeholders field",
+            validator=String(default="<b>📝 Запрос:</b>"),
+        ),
+        ConfigValue(
+            "response_label",
+            "<b>💬 Ответ:</b>",
+            description="Response block label template. Supports placeholders from placeholders field",
+            validator=String(default="<b>💬 Ответ:</b>"),
+        ),
+        ConfigValue(
             "thinking_template",
             "{random}",
             description="Thinking message template. Supports placeholders from placeholders field",
@@ -440,6 +452,8 @@ class OpenAgent(ModuleBase):
             "context_enabled": True,
             "context_turns": 10,
             "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            "request_label": "<b>📝 Запрос:</b>",
+            "response_label": "<b>💬 Ответ:</b>",
             "thinking_template": "{random}",
             "random_strings": ["Thinking...", "Думаю...", "Генерирую..."],
             "placeholders": "",
@@ -552,6 +566,18 @@ class OpenAgent(ModuleBase):
                 "{time} - Current local time",
                 "{date} - Current local date",
             ]
+        )
+
+    def _request_label(self, *, elapsed: float | None = None) -> str:
+        return self._render_template(
+            str(self.config.get("request_label", "") or "<b>📝 Запрос:</b>"),
+            elapsed=elapsed,
+        )
+
+    def _response_label(self, *, elapsed: float | None = None) -> str:
+        return self._render_template(
+            str(self.config.get("response_label", "") or "<b>💬 Ответ:</b>"),
+            elapsed=elapsed,
         )
 
     def _remember_context(self, chat_id: int | None, prompt: str, answer: str) -> None:
@@ -2850,6 +2876,8 @@ class OpenAgent(ModuleBase):
         text = self._sanitize_answer(text or "")
         formatted = self._format_agent_markdown(text)
         formatted_prompt = self._format_agent_markdown(prompt or "")
+        request_label = self._request_label()
+        response_label = self._response_label()
         agent_log_html = self._agent_log_html(agent_log or [])
         if len(formatted) + len(formatted_prompt) + len(agent_log_html) > 3500:
             await self._send_answer_file(event, title, prompt, text or "", agent_log or [], buttons)
@@ -2860,11 +2888,11 @@ class OpenAgent(ModuleBase):
             if index == 0:
                 body = (
                     f"{header}\n\n"
-                    f"<b>📝 Запрос:</b>\n<blockquote expandable>{formatted_prompt}</blockquote>\n\n"
-                    f"<b>💬 Ответ:</b>\n<blockquote expandable>{chunk}</blockquote>"
+                    f"{request_label}\n<blockquote expandable>{formatted_prompt}</blockquote>\n\n"
+                    f"{response_label}\n<blockquote expandable>{chunk}</blockquote>"
                 )
             else:
-                body = f"{header}\n\n<b>💬 Ответ:</b>\n<blockquote expandable>{chunk}</blockquote>"
+                body = f"{header}\n\n{response_label}\n<blockquote expandable>{chunk}</blockquote>"
             if index == len(chunks) - 1:
                 body += self._agent_log_html(agent_log or [])
             chat_id = getattr(event, "chat_id", None)
