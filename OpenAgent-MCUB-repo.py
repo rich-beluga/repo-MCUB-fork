@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 from telethon import events
@@ -67,7 +67,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.3.1"
+    version = "0.4.0"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с доступом к терминалу",
@@ -771,7 +771,50 @@ class OpenAgent(ModuleBase):
             result += f"stderr:\n{err}\n"
         return result[-6000:]
 
+    def _looks_like_url(self, value: str) -> bool:
+        value = value.strip()
+        if value.startswith(("http://", "https://")):
+            return True
+        parsed = urlparse("https://" + value)
+        return "." in parsed.netloc and " " not in parsed.netloc
+
+    def _html_to_text(self, value: str) -> str:
+        value = re.sub(r"<script\b[^>]*>.*?</script>", " ", value, flags=re.I | re.S)
+        value = re.sub(r"<style\b[^>]*>.*?</style>", " ", value, flags=re.I | re.S)
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", value, flags=re.I | re.S)
+        title = html.unescape(re.sub(r"<[^>]+>", " ", title_match.group(1))).strip() if title_match else ""
+        links = []
+        for href, text in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', value, flags=re.I | re.S)[:40]:
+            text_clean = html.unescape(re.sub(r"<[^>]+>", " ", text)).strip()
+            if text_clean and href:
+                links.append(f"- {text_clean}: {href}")
+        body = html.unescape(re.sub(r"<[^>]+>", " ", value))
+        body = re.sub(r"\s+", " ", body).strip()
+        parts = []
+        if title:
+            parts.append(f"Title: {title}")
+        if body:
+            parts.append("Content:\n" + body[:12000])
+        if links:
+            parts.append("Links:\n" + "\n".join(links))
+        return "\n\n".join(parts) or "No readable content"
+
     async def _web_search(self, query: str) -> str:
+        query = query.strip()
+        if self._looks_like_url(query):
+            url = query if query.startswith(("http://", "https://")) else "https://" + query
+            headers = {"User-Agent": "Mozilla/5.0"}
+            timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    text = await resp.text(errors="replace")
+                    if resp.status >= 400:
+                        raise RuntimeError(f"Fetch HTTP {resp.status}: {text[:500]}")
+                    content_type = resp.headers.get("Content-Type", "")
+            if "html" in content_type.lower():
+                return f"Fetched URL: {url}\n\n" + self._html_to_text(text)
+            return f"Fetched URL: {url}\nContent-Type: {content_type}\n\n{text[:12000]}"
+
         url = f"https://duckduckgo.com/html/?q={quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0"}
         timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
@@ -1905,6 +1948,7 @@ class OpenAgent(ModuleBase):
         source_event: Any | None = None,
         attachments: list[dict[str, str]] | None = None,
         cancel_token: str | None = None,
+        system_override: str | None = None,
     ) -> tuple[str, list[str]]:
         provider = self._provider()
         if provider == "ollama.cloud":
@@ -1921,7 +1965,9 @@ class OpenAgent(ModuleBase):
             user_content = self._build_openai_content(prompt, attachments)
 
         chat_id = getattr(source_event, "chat_id", None) if source_event is not None else None
-        messages: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_override or self._system_prompt()}
+        ]
         messages.extend(self._history_for_chat(chat_id))
         messages.append({"role": "user", "content": user_content})
 
@@ -2904,6 +2950,53 @@ class OpenAgent(ModuleBase):
                 as_html=True,
             )
 
+    @command("mcubh", doc_ru="<вопрос> учитель по MCUB", doc_en="<question> MCUB teacher")
+    async def cmd_mcubh(self, event: events.NewMessage.Event) -> None:
+        prompt = self._args_raw(event)
+        if not prompt:
+            await self.edit(event, "Usage: .mcubh <question>")
+            return
+
+        system = (
+            "You are MCUB Helper, a professional teacher for the MCUB Telegram userbot. "
+            "Explain things for beginners in Russian unless asked otherwise. "
+            "Prefer real MCUB commands and exact steps. If user asks how to change settings, "
+            "give the command or config path that actually works in MCUB. Be concise, practical, and safe. "
+            "Do not invent commands; if unsure, use available tools like history/search/terminal to inspect docs or modules."
+        )
+        cancel_token = str(uuid.uuid4())
+        cancel_button = self.Button.inline("Отмена", self._cancel_generation, args=(cancel_token,))
+        try:
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
+        except Exception:
+            loading = await self.edit(event, self._thinking_text())
+        started = time.monotonic()
+        try:
+            answer, agent_log = await self._ask_agent(
+                prompt,
+                status_event=loading or event,
+                source_event=event,
+                cancel_token=cancel_token,
+                system_override=system,
+            )
+            elapsed = time.monotonic() - started
+            await self._reply_text(
+                loading or event,
+                answer,
+                title=self._response_title(elapsed),
+                prompt=prompt,
+                agent_log=agent_log,
+            )
+            self._cancelled_generations.discard(cancel_token)
+            try:
+                await (loading or event).delete()
+            except Exception:
+                pass
+        except Exception as exc:
+            self._cancelled_generations.discard(cancel_token)
+            await self.kernel.handle_error(exc, source="OpenAgent:mcubh", event=event)
+            await self.edit(loading or event, html.escape(self.strings("error", error=str(exc))), as_html=True)
+
     @command("skills", doc_ru="список скиллов OpenAgent", doc_en="list OpenAgent skills")
     async def cmd_skills(self, event: events.NewMessage.Event) -> None:
         skills = self._list_skills()
@@ -2919,6 +3012,27 @@ class OpenAgent(ModuleBase):
             title = first_line.lstrip("# ").strip() if first_line.startswith("#") else path.stem
             lines.append(f"- {path.stem}: {title}")
         await self.edit(event, "<pre>" + html.escape("\n".join(lines)) + "</pre>", as_html=True)
+
+    @command("sendss", doc_ru="<name> отправить .md скилл", doc_en="<name> send skill .md")
+    async def cmd_sendss(self, event: events.NewMessage.Event) -> None:
+        name = self._args_raw(event)
+        if not name:
+            await self.edit(event, "Usage: .sendss <skill_name>")
+            return
+        path = self._skill_path(name)
+        if not path.exists():
+            await self.edit(event, "Skill not found")
+            return
+        await self.client.send_file(
+            event.chat_id,
+            str(path),
+            caption=f"<b>Skill:</b> <code>{html.escape(path.stem)}</code>",
+            parse_mode="html",
+        )
+        try:
+            await event.delete()
+        except Exception:
+            pass
 
     @command("imss", doc_ru="[name] импортировать .md скилл из reply", doc_en="[name] import .md skill from reply")
     async def cmd_imss(self, event: events.NewMessage.Event) -> None:
@@ -2965,3 +3079,4 @@ class OpenAgent(ModuleBase):
             return
         path.unlink()
         await self.edit(event, f"Skill deleted: <code>{html.escape(path.stem)}</code>", as_html=True)
+
