@@ -4,7 +4,7 @@
 # -- end --
 # SPDX-License-Identifier: MIT
 # author: @dev_dolbaeb
-# version: 0.4.3
+# version: 0.4.4
 # description: AI agent inside MCUB userbot
 # requires: aiohttp
 # scop: inline
@@ -74,7 +74,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.3"
+    version = "0.4.4"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
@@ -2979,7 +2979,7 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]], parse_mode='html')
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
             loading = event
 
@@ -3040,9 +3040,9 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]], parse_mode='html')
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
         except Exception:
-            loading = await self.edit(event, self._thinking_text(), as_html=True)
+            loading = await self.edit(event, self._thinking_text())
         started = time.monotonic()
         try:
             answer, agent_log = await self._ask_agent(
