@@ -2917,12 +2917,12 @@ class OpenAgent(ModuleBase):
 
     def _direct_button(self, text: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "cancel":
-            return self.Button.inline(text, self._cancel_generation, args=(payload.get("token", ""),))
+            return self.Button.inline(text, self._cancel_generation, args=(payload.get("token", ""),), style="danger")
         if kind == "clear":
-            return self.Button.inline(text, self._clear_context, args=(payload.get("chat_id"),))
+            return self.Button.inline(text, self._clear_context, args=(payload.get("chat_id"),), style="danger")
         if kind == "regen":
-            return self.Button.inline(text, self._regenerate_response, args=(payload.get("token", ""),))
-        return self.Button.inline(text, self._clear_context, args=(None,))
+            return self.Button.inline(text, self._regenerate_response, args=(payload.get("token", ""),), style="primary")
+        return self.Button.inline(text, self._clear_context, args=(None,), style="danger")
 
     async def _handle_direct_callback(self, event: Any) -> None:
         data = getattr(event, "data", b"")
@@ -2973,8 +2973,8 @@ class OpenAgent(ModuleBase):
             )[:-50]
             for key in stale:
                 self._regen_payloads.pop(key, None)
-        clear_button = self._direct_button("Очистить", "clear", {"chat_id": chat_id})
-        regen_button = self._direct_button("Регенерировать", "regen", {"token": regen_token})
+        clear_button = self._direct_button("🧹 Очистить", "clear", {"chat_id": chat_id})
+        regen_button = self._direct_button("🔃 Регенерировать", "regen", {"token": regen_token})
         return [[clear_button, regen_button]]
 
     async def _regenerate_response(self, event: Any, token: str) -> None:
