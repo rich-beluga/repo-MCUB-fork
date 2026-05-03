@@ -4,7 +4,7 @@
 # -- end --
 # SPDX-License-Identifier: MIT
 # author: @dev_dolbaeb
-# version: 0.4.5
+# version: 1.4.8.8
 # description: AI agent inside MCUB userbot
 # requires: aiohttp
 # scop: inline
@@ -74,7 +74,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.5"
+    version = "1.4.8.8"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
@@ -3136,58 +3136,6 @@ class OpenAgent(ModuleBase):
                 as_html=True,
             )
 
-    @command("mcubh", doc_ru="<вопрос> учитель по MCUB", doc_en="<question> MCUB teacher")
-    async def cmd_mcubh(self, event: events.NewMessage.Event) -> None:
-        prompt = self._args_raw(event)
-        if not prompt:
-            await self.edit(event, "Usage: .mcubh <question>")
-            return
-
-        system = (
-            "You are MCUB Helper, a professional teacher for the MCUB Telegram userbot. "
-            "Explain things for beginners in Russian unless asked otherwise. "
-            "Prefer real MCUB commands and exact steps. If user asks how to change settings, "
-            "give the command or config path that actually works in MCUB. Be concise, practical, and safe. "
-            "Do not invent commands; if unsure, use available tools like history/search/terminal to inspect docs or modules."
-        )
-        cancel_token = str(uuid.uuid4())
-        cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
-        try:
-            edited = await event.edit(
-                self._thinking_text(),
-                buttons=[[cancel_button]],
-                parse_mode="html",
-            )
-            loading = edited if edited and not isinstance(edited, bool) else event
-        except Exception:
-            loading = await self.edit(event, self._thinking_text())
-        started = time.monotonic()
-        try:
-            answer, agent_log = await self._ask_agent(
-                prompt,
-                status_event=loading or event,
-                source_event=event,
-                cancel_token=cancel_token,
-                system_override=system,
-            )
-            elapsed = time.monotonic() - started
-            await self._reply_text(
-                loading or event,
-                answer,
-                title=self._response_title(elapsed),
-                prompt=prompt,
-                agent_log=agent_log,
-            )
-            self._cancelled_generations.discard(cancel_token)
-            try:
-                await (loading or event).delete()
-            except Exception:
-                pass
-        except Exception as exc:
-            self._cancelled_generations.discard(cancel_token)
-            await self.kernel.handle_error(exc, source="OpenAgent:mcubh", event=event)
-            await self.edit(loading or event, html.escape(self.strings("error", error=str(exc))), as_html=True)
-
     @command("skills", doc_ru="список скиллов OpenAgent", doc_en="list OpenAgent skills")
     async def cmd_skills(self, event: events.NewMessage.Event) -> None:
         skills = self._list_skills()
@@ -3270,3 +3218,5 @@ class OpenAgent(ModuleBase):
             return
         path.unlink()
         await self.edit(event, f"Skill deleted: <code>{html.escape(path.stem)}</code>", as_html=True)
+
+# release_size_padding:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
