@@ -2830,9 +2830,11 @@ class OpenAgent(ModuleBase):
                         "<b>OpenAgent controls</b>",
                         buttons=buttons,
                         ttl=900,
+                        parse_mode="html",
                     )
         else:
-            await self.reply(event, caption, file=buf, as_html=True)
+            if hasattr(event, "reply"):
+                await self.reply(event, caption, file=buf, as_html=True)
 
     async def _reply_text(
         self,
@@ -2843,6 +2845,7 @@ class OpenAgent(ModuleBase):
         prompt: str = "",
         agent_log: list[str] | None = None,
         buttons: list[list[Any]] | None = None,
+        edit_current: bool = False,
     ) -> None:
         text = self._sanitize_answer(text or "")
         formatted = self._format_agent_markdown(text)
@@ -2865,6 +2868,16 @@ class OpenAgent(ModuleBase):
             if index == len(chunks) - 1:
                 body += self._agent_log_html(agent_log or [])
             chat_id = getattr(event, "chat_id", None)
+            if edit_current and hasattr(event, "edit"):
+                try:
+                    await event.edit(
+                        body,
+                        parse_mode="html",
+                        buttons=buttons if index == len(chunks) - 1 else None,
+                    )
+                    continue
+                except Exception:
+                    pass
             if chat_id is not None:
                 if buttons and index == len(chunks) - 1:
                     try:
@@ -2873,6 +2886,7 @@ class OpenAgent(ModuleBase):
                             body,
                             buttons=buttons,
                             ttl=900,
+                            parse_mode="html",
                         )
                     except Exception:
                         await self.client.send_message(chat_id, body, parse_mode="html")
@@ -2883,7 +2897,8 @@ class OpenAgent(ModuleBase):
                         parse_mode="html",
                     )
             else:
-                await self.reply(event, body, as_html=True)
+                if hasattr(event, "reply"):
+                    await self.reply(event, body, as_html=True)
 
     async def _cancel_generation(self, event: Any, token: str) -> None:
         self._cancelled_generations.add(token)
@@ -2979,7 +2994,12 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
+            edited = await event.edit(
+                self._thinking_text(),
+                buttons=[[cancel_button]],
+                parse_mode="html",
+            )
+            loading = edited if edited and not isinstance(edited, bool) else event
         except Exception:
             loading = event
 
@@ -3006,6 +3026,7 @@ class OpenAgent(ModuleBase):
                     payload["full_prompt"],
                     payload.get("attachments") or [],
                 ),
+                edit_current=True,
             )
             self._cancelled_generations.discard(cancel_token)
             try:
@@ -3040,7 +3061,12 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
+            edited = await event.edit(
+                self._thinking_text(),
+                buttons=[[cancel_button]],
+                parse_mode="html",
+            )
+            loading = edited if edited and not isinstance(edited, bool) else event
         except Exception:
             loading = await self.edit(event, self._thinking_text())
         started = time.monotonic()
@@ -3099,7 +3125,12 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
+            edited = await event.edit(
+                self._thinking_text(),
+                buttons=[[cancel_button]],
+                parse_mode="html",
+            )
+            loading = edited if edited and not isinstance(edited, bool) else event
         except Exception:
             loading = await self.edit(event, self._thinking_text())
         started = time.monotonic()
