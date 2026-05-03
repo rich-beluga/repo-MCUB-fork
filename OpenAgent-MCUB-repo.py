@@ -1,3 +1,7 @@
+# -- repo data --
+# scop: kernel min v1.3.0
+# repo: https://github.com/hairpin01/repo-MCUB-fork/
+# -- end --
 # SPDX-License-Identifier: MIT
 # author: @dev_dolbaeb
 # version: 0.4.1
