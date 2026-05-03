@@ -65,6 +65,7 @@ from core.lib.loader.module_config import (
     ConfigValue,
     Float,
     Integer,
+    List,
     ModuleConfig,
     Secret,
     String,
@@ -392,9 +393,9 @@ class OpenAgent(ModuleBase):
         ),
         ConfigValue(
             "random_strings",
-            "Thinking...\nДумаю...\nГенерирую...",
-            description="Random lines for {random}, one per line",
-            validator=String(default="Thinking...\nДумаю...\nГенерирую..."),
+            ["Thinking...", "Думаю...", "Генерирую..."],
+            description="Random lines for {random}",
+            validator=List(default=["Thinking...", "Думаю...", "Генерирую..."], item_type=str),
         ),
         ConfigValue(
             "placeholders",
@@ -440,10 +441,16 @@ class OpenAgent(ModuleBase):
             "context_turns": 10,
             "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
             "thinking_template": "{random}",
-            "random_strings": "Thinking...\nДумаю...\nГенерирую...",
+            "random_strings": ["Thinking...", "Думаю...", "Генерирую..."],
             "placeholders": "",
         }
         config_dict = await self.kernel.get_module_config(self.name, defaults)
+        if isinstance(config_dict.get("random_strings"), str):
+            config_dict["random_strings"] = [
+                line.strip()
+                for line in config_dict["random_strings"].splitlines()
+                if line.strip()
+            ] or defaults["random_strings"]
         config_dict["placeholders"] = self._format_placeholders()
         provider = self._normalize_provider(str(config_dict.get("provider", "openai")))
         config_dict["provider"] = provider if provider in self.PROVIDERS else "openai"
@@ -505,11 +512,10 @@ class OpenAgent(ModuleBase):
         )
 
     def _placeholder_values(self, *, elapsed: float | None = None) -> dict[str, str]:
-        random_lines = [
-            line.strip()
-            for line in str(self.config.get("random_strings", "") or "").splitlines()
-            if line.strip()
-        ]
+        raw_random = self.config.get("random_strings", []) or []
+        if isinstance(raw_random, str):
+            raw_random = raw_random.splitlines()
+        random_lines = [str(line).strip() for line in raw_random if str(line).strip()]
         random_value = random.choice(random_lines) if random_lines else "Thinking..."
         return {
             "provider": self._provider_label(),
