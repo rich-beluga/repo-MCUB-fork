@@ -2820,10 +2820,17 @@ class OpenAgent(ModuleBase):
                     buf,
                     caption=caption,
                     parse_mode="html",
-                    buttons=buttons,
                 )
             except Exception:
                 await self.client.send_file(chat_id, buf, caption="OpenAgent answer")
+            if buttons:
+                with contextlib.suppress(Exception):
+                    await self.inline(
+                        chat_id,
+                        "<b>OpenAgent controls</b>",
+                        buttons=buttons,
+                        ttl=900,
+                    )
         else:
             await self.reply(event, caption, file=buf, as_html=True)
 
@@ -2859,15 +2866,22 @@ class OpenAgent(ModuleBase):
                 body += self._agent_log_html(agent_log or [])
             chat_id = getattr(event, "chat_id", None)
             if chat_id is not None:
-                try:
+                if buttons and index == len(chunks) - 1:
+                    try:
+                        await self.inline(
+                            chat_id,
+                            body,
+                            buttons=buttons,
+                            ttl=900,
+                        )
+                    except Exception:
+                        await self.client.send_message(chat_id, body, parse_mode="html")
+                else:
                     await self.client.send_message(
                         chat_id,
                         body,
                         parse_mode="html",
-                        buttons=buttons if index == len(chunks) - 1 else None,
                     )
-                except Exception:
-                    await self.client.send_message(chat_id, body, parse_mode="html")
             else:
                 await self.reply(event, body, as_html=True)
 
@@ -2887,20 +2901,13 @@ class OpenAgent(ModuleBase):
             pass
 
     def _direct_button(self, text: str, kind: str, payload: dict[str, Any]) -> Any:
-        token = uuid.uuid4().hex
-        self._direct_callback_payloads[token] = {
-            "kind": kind,
-            "payload": payload,
-            "created_at": time.time(),
-        }
-        if len(self._direct_callback_payloads) > 100:
-            stale = sorted(
-                self._direct_callback_payloads,
-                key=lambda key: self._direct_callback_payloads[key].get("created_at", 0),
-            )[:-100]
-            for key in stale:
-                self._direct_callback_payloads.pop(key, None)
-        return Button.inline(text, f"oa:{token}".encode())
+        if kind == "cancel":
+            return self.Button.inline(text, self._cancel_generation, args=(payload.get("token", ""),))
+        if kind == "clear":
+            return self.Button.inline(text, self._clear_context, args=(payload.get("chat_id"),))
+        if kind == "regen":
+            return self.Button.inline(text, self._regenerate_response, args=(payload.get("token", ""),))
+        return self.Button.inline(text, self._clear_context, args=(None,))
 
     async def _handle_direct_callback(self, event: Any) -> None:
         data = getattr(event, "data", b"")
