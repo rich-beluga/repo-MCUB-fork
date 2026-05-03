@@ -1,5 +1,5 @@
 # -- repo data --
-# scop: kernel min v1.2.8
+# scop: kernel min v1.3.0
 # repo: https://github.com/hairpin01/repo-MCUB-fork/
 # -- end --
 # scop: inline
