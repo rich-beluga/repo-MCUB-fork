@@ -4,7 +4,7 @@
 # -- end --
 # SPDX-License-Identifier: MIT
 # author: @dev_dolbaeb
-# version: 0.4.2
+# version: 0.4.3
 # description: AI agent inside MCUB userbot
 # requires: aiohttp
 # scop: inline
@@ -73,7 +73,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.2"
+    version = "0.4.3"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
