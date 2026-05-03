@@ -2972,7 +2972,7 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]], parse_mode='html')
         except Exception:
             loading = event
 
@@ -3033,9 +3033,9 @@ class OpenAgent(ModuleBase):
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
         try:
-            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]])
+            loading = await event.edit(self._thinking_text(), buttons=[[cancel_button]], parse_mode='html')
         except Exception:
-            loading = await self.edit(event, self._thinking_text())
+            loading = await self.edit(event, self._thinking_text(), as_html=True)
         started = time.monotonic()
         try:
             answer, agent_log = await self._ask_agent(
