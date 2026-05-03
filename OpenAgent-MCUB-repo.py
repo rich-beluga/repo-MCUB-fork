@@ -4,7 +4,7 @@
 # -- end --
 # SPDX-License-Identifier: MIT
 # author: @dev_dolbaeb
-# version: 0.4.2
+# version: 0.4.4
 # description: AI agent inside MCUB userbot
 # requires: aiohttp
 # scop: inline
@@ -37,6 +37,7 @@ from telethon.tl.functions.channels import (
     CreateChannelRequest,
     EditAdminRequest,
     EditPhotoRequest,
+    GetParticipantsRequest,
     EditTitleRequest,
     JoinChannelRequest,
     ToggleSlowModeRequest,
@@ -46,6 +47,7 @@ from telethon.tl.functions.contacts import (
     AddContactRequest,
     BlockRequest,
     DeleteContactsRequest,
+    GetBlockedRequest,
     UnblockRequest,
 )
 from telethon.tl.functions.messages import (
@@ -56,7 +58,7 @@ from telethon.tl.functions.messages import (
 )
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
 from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.types import ChannelParticipantsAdmins, ChatAdminRights
+from telethon.tl.types import ChannelParticipantsAdmins, ChannelParticipantsKicked, ChatAdminRights
 
 from core.lib.loader.module_base import ModuleBase, command
 from core.lib.loader.module_config import (
@@ -73,7 +75,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.2"
+    version = "0.4.4"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
@@ -174,6 +176,8 @@ class OpenAgent(ModuleBase):
     UNMUTE_USER_RE = re.compile(r"<unmute_user([^>]*)>(.*?)</unmute_user>", re.DOTALL | re.I)
     BAN_USER_RE = re.compile(r"<ban_user([^>]*)>(.*?)</ban_user>", re.DOTALL | re.I)
     UNBAN_USER_RE = re.compile(r"<unban_user([^>]*)>(.*?)</unban_user>", re.DOTALL | re.I)
+    BANNED_USERS_RE = re.compile(r"<banned_users([^>]*)>(.*?)</banned_users>", re.DOTALL | re.I)
+    UNBAN_ALL_RE = re.compile(r"<unban_all([^>]*)>(.*?)</unban_all>", re.DOTALL | re.I)
     KICK_USER_RE = re.compile(r"<kick_user([^>]*)>(.*?)</kick_user>", re.DOTALL | re.I)
     PROMOTE_USER_RE = re.compile(r"<promote_user([^>]*)>(.*?)</promote_user>", re.DOTALL | re.I)
     DEMOTE_USER_RE = re.compile(r"<demote_user([^>]*)>(.*?)</demote_user>", re.DOTALL | re.I)
@@ -190,6 +194,7 @@ class OpenAgent(ModuleBase):
     LEAVE_CHAT_RE = re.compile(r"<leave_chat([^>]*)>(.*?)</leave_chat>", re.DOTALL | re.I)
     BLOCK_USER_RE = re.compile(r"<block_user([^>]*)>(.*?)</block_user>", re.DOTALL | re.I)
     UNBLOCK_USER_RE = re.compile(r"<unblock_user([^>]*)>(.*?)</unblock_user>", re.DOTALL | re.I)
+    BLOCKED_USERS_RE = re.compile(r"<blocked_users([^>]*)>(.*?)</blocked_users>", re.DOTALL | re.I)
     ADD_CONTACT_RE = re.compile(r"<add_contact([^>]*)>(.*?)</add_contact>", re.DOTALL | re.I)
     DELETE_CONTACT_RE = re.compile(r"<delete_contact([^>]*)>(.*?)</delete_contact>", re.DOTALL | re.I)
     SAVE_DRAFT_RE = re.compile(r"<save_draft([^>]*)>(.*?)</save_draft>", re.DOTALL | re.I)
@@ -695,6 +700,8 @@ class OpenAgent(ModuleBase):
                 "<unmute_user user=\"@user_or_id\" chat=\"current\"></unmute_user>, "
                 "<ban_user user=\"@user_or_id\" chat=\"current\">reason</ban_user>, "
                 "<unban_user user=\"@user_or_id\" chat=\"current\"></unban_user>, "
+                "<banned_users chat=\"@chat\" limit=\"100\"></banned_users> to list banned users, "
+                "<unban_all chat=\"@chat\" limit=\"500\"></unban_all> to unban all banned users, "
                 "<kick_user user=\"@user_or_id\" chat=\"current\"></kick_user>, "
                 "<promote_user user=\"@user_or_id\" chat=\"current\" rank=\"Admin\"></promote_user>, "
                 "<demote_user user=\"@user_or_id\" chat=\"current\"></demote_user>, "
@@ -709,6 +716,7 @@ class OpenAgent(ModuleBase):
                 "<mark_read chat=\"current\"></mark_read>, <archive_dialog chat=\"@chat\"></archive_dialog>, "
                 "<unarchive_dialog chat=\"@chat\"></unarchive_dialog>, <leave_chat chat=\"@chat\"></leave_chat>, "
                 "<block_user user=\"@user\"></block_user>, <unblock_user user=\"@user\"></unblock_user>, "
+                "<blocked_users limit=\"100\"></blocked_users> to list your Telegram blacklist, "
                 "<add_contact user=\"@user\" first_name=\"Name\" phone=\"+1000\"></add_contact>, "
                 "<delete_contact user=\"@user\"></delete_contact>, <save_draft chat=\"@chat\">text</save_draft>, "
                 "<edit_message chat=\"current\" id=\"123\">text</edit_message>, "
@@ -1736,6 +1744,72 @@ class OpenAgent(ModuleBase):
             return f"Could not unban user: {exc}"
         return "User unbanned"
 
+    async def _iter_banned_users(self, chat: Any, limit: int) -> list[Any]:
+        users: list[Any] = []
+        offset = 0
+        input_chat = await self.client.get_input_entity(chat)
+        while len(users) < limit:
+            result = await self.client(
+                GetParticipantsRequest(
+                    channel=input_chat,
+                    filter=ChannelParticipantsKicked(""),
+                    offset=offset,
+                    limit=min(100, limit - len(users)),
+                    hash=0,
+                )
+            )
+            batch = list(getattr(result, "users", []) or [])
+            if not batch:
+                break
+            users.extend(batch)
+            offset += len(batch)
+            if len(batch) < 100:
+                break
+        return users
+
+    async def _banned_users_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        limit = max(1, min(int(attrs.get("limit", "100") or 100), 1000))
+        try:
+            users = await self._iter_banned_users(chat, limit)
+        except Exception as exc:
+            return f"Could not list banned users: {exc}"
+        if not users:
+            return "No banned users found"
+        lines = []
+        for user in users:
+            username = f"@{user.username}" if getattr(user, "username", None) else ""
+            name = " ".join(
+                p for p in (getattr(user, "first_name", None), getattr(user, "last_name", None)) if p
+            ) or "Unknown"
+            lines.append(f"{name} {username} [id={getattr(user, 'id', None)}]".strip())
+        return "\n".join(lines)
+
+    async def _unban_all_tool(self, attrs_raw: str, source_event: Any | None) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        limit = max(1, min(int(attrs.get("limit", "500") or 500), 5000))
+        try:
+            users = await self._iter_banned_users(chat, limit)
+        except Exception as exc:
+            return f"Could not list banned users: {exc}"
+        if not users:
+            return "No banned users found"
+        ok = 0
+        failed = []
+        for user in users:
+            try:
+                await self.client.edit_permissions(chat, user, view_messages=True, send_messages=True)
+                ok += 1
+            except Exception as exc:
+                failed.append(f"{getattr(user, 'id', None)}: {exc}")
+            await asyncio.sleep(0.2)
+        text = f"Unbanned {ok}/{len(users)} banned user(s) in {chat}"
+        if failed:
+            text += "\nFailed:\n" + "\n".join(failed[:20])
+        return text
+
     async def _kick_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
         attrs = self._parse_xml_attrs(attrs_raw)
         chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
@@ -1934,6 +2008,37 @@ class OpenAgent(ModuleBase):
                     return "User unblocked"
                 await self.client(DeleteContactsRequest([input_user]))
                 return "Contact deleted"
+
+            if name == "blocked_users":
+                limit = max(1, min(int(attrs.get("limit", "100") or 100), 1000))
+                offset = 0
+                users = []
+                while len(users) < limit:
+                    result = await self.client(
+                        GetBlockedRequest(offset=offset, limit=min(100, limit - len(users)))
+                    )
+                    batch = list(getattr(result, "blocked", []) or [])
+                    result_users = {getattr(user, "id", None): user for user in getattr(result, "users", []) or []}
+                    if not batch:
+                        break
+                    for blocked in batch:
+                        peer_id = getattr(getattr(blocked, "peer_id", None), "user_id", None)
+                        user = result_users.get(peer_id)
+                        if user:
+                            users.append(user)
+                    offset += len(batch)
+                    if len(batch) < 100:
+                        break
+                if not users:
+                    return "Telegram blacklist is empty"
+                lines = []
+                for user in users[:limit]:
+                    username = f"@{user.username}" if getattr(user, "username", None) else ""
+                    name_text = " ".join(
+                        p for p in (getattr(user, "first_name", None), getattr(user, "last_name", None)) if p
+                    ) or "Unknown"
+                    lines.append(f"{name_text} {username} [id={getattr(user, 'id', None)}]".strip())
+                return "\n".join(lines)
 
             if name == "add_contact":
                 user = await self._resolve_tool_user(attrs.get("user"), source_event)
@@ -2147,6 +2252,7 @@ class OpenAgent(ModuleBase):
                 ("leave_chat", self.LEAVE_CHAT_RE.search(answer or "")),
                 ("block_user", self.BLOCK_USER_RE.search(answer or "")),
                 ("unblock_user", self.UNBLOCK_USER_RE.search(answer or "")),
+                ("blocked_users", self.BLOCKED_USERS_RE.search(answer or "")),
                 ("add_contact", self.ADD_CONTACT_RE.search(answer or "")),
                 ("delete_contact", self.DELETE_CONTACT_RE.search(answer or "")),
                 ("save_draft", self.SAVE_DRAFT_RE.search(answer or "")),
@@ -2565,6 +2671,7 @@ class OpenAgent(ModuleBase):
                 self.LEAVE_CHAT_RE,
                 self.BLOCK_USER_RE,
                 self.UNBLOCK_USER_RE,
+                self.BLOCKED_USERS_RE,
                 self.ADD_CONTACT_RE,
                 self.DELETE_CONTACT_RE,
                 self.SAVE_DRAFT_RE,
@@ -2627,6 +2734,7 @@ class OpenAgent(ModuleBase):
             self.LEAVE_CHAT_RE,
             self.BLOCK_USER_RE,
             self.UNBLOCK_USER_RE,
+            self.BLOCKED_USERS_RE,
             self.ADD_CONTACT_RE,
             self.DELETE_CONTACT_RE,
             self.SAVE_DRAFT_RE,
