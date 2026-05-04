@@ -4,7 +4,7 @@
 # -- end --
 # SPDX-License-Identifier: MIT
 # author: @dev_dolbaeb
-# version: 1.4.8.8
+# version: 0.4.6
 # description: AI agent inside MCUB userbot
 # requires: aiohttp
 # scop: inline
@@ -72,13 +72,9 @@ from core.lib.loader.module_config import (
 )
 
 
-def _placeholder_names(placeholders: tuple[tuple[str, str], ...]) -> str:
-    return "Placeholders: " + ", ".join(placeholder for placeholder, _ in placeholders)
-
-
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "1.4.8.8"
+    version = "0.4.6"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
@@ -129,21 +125,6 @@ class OpenAgent(ModuleBase):
         "openai": "https://api.openai.com/v1",
         "google": "https://generativelanguage.googleapis.com/v1beta",
     }
-    AVAILABLE_PLACEHOLDERS = (
-        ("{provider}", "Provider label"),
-        ("{provider_key}", "Provider config key"),
-        ("{model}", "Current model"),
-        ("{elapsed}", "Generation time seconds"),
-        ("{random}", "Random line from random_strings"),
-        ("{prefix}", "Current command prefix"),
-        ("{time}", "Current local time"),
-        ("{date}", "Current local date"),
-        ("{input_tokens}", "Prompt/input tokens (if available)"),
-        ("{output_tokens}", "Completion/output tokens (if available)"),
-        ("{total_tokens}", "Total tokens (if available)"),
-        ("{prompt}", "User prompt text"),
-        ("{answer}", "AI answer text"),
-    )
     TERMINAL_RE = re.compile(r"<terminal>\s*(.*?)\s*</terminal>", re.DOTALL | re.I)
     WEB_SEARCH_RE = re.compile(
         r"<web_search>\s*(.*?)\s*</web_search>", re.DOTALL | re.I
@@ -400,23 +381,26 @@ class OpenAgent(ModuleBase):
         ),
         ConfigValue(
             "response_header",
-            "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider} | 🤖 {model} | ⬅️ {input_tokens} ➡️ {output_tokens}",
-            description="Final response header template. "
-            + _placeholder_names(AVAILABLE_PLACEHOLDERS),
-            validator=String(default="🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider} | 🤖 {model} | ⬅️ {input_tokens} ➡️ {output_tokens}"),
+            "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            description="Final response header template. Supports placeholders from placeholders field",
+            validator=String(default="🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}"),
         ),
         ConfigValue(
-            "message_template",
-            "<b>📝 Запрос:</b>\n<blockquote expandable>{prompt}</blockquote>\n\n<b>💬 Ответ:</b>\n<blockquote expandable>{answer}</blockquote>",
-            description="Full message template. "
-            + _placeholder_names(AVAILABLE_PLACEHOLDERS),
-            validator=String(default="<b>📝 Запрос:</b>\n<blockquote expandable>{prompt}</blockquote>\n\n<b>💬 Ответ:</b>\n<blockquote expandable>{answer}</blockquote>"),
+            "request_label",
+            "<b>📝 Запрос:</b>",
+            description="Request block label template. Supports placeholders from placeholders field",
+            validator=String(default="<b>📝 Запрос:</b>"),
+        ),
+        ConfigValue(
+            "response_label",
+            "<b>💬 Ответ:</b>",
+            description="Response block label template. Supports placeholders from placeholders field",
+            validator=String(default="<b>💬 Ответ:</b>"),
         ),
         ConfigValue(
             "thinking_template",
             "{random}",
-            description="Thinking message template. "
-            + _placeholder_names(AVAILABLE_PLACEHOLDERS),
+            description="Thinking message template. Supports placeholders from placeholders field",
             validator=String(default="{random}"),
         ),
         ConfigValue(
@@ -424,6 +408,12 @@ class OpenAgent(ModuleBase):
             ["Thinking...", "Думаю...", "Генерирую..."],
             description="Random lines for {random}",
             validator=List(default=["Thinking...", "Думаю...", "Генерирую..."], item_type=str),
+        ),
+        ConfigValue(
+            "placeholders",
+            "",
+            description="Available OpenAgent placeholders (auto-generated)",
+            validator=String(default=""),
         ),
     )
 
@@ -461,10 +451,12 @@ class OpenAgent(ModuleBase):
             "media_max_bytes": 8_000_000,
             "context_enabled": True,
             "context_turns": 10,
-            "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider} | 🤖 {model} | ⬅️ {input_tokens} ➡️ {output_tokens}",
-            "message_template": "<b>📝 Запрос:</b>\n<blockquote expandable>{prompt}</blockquote>\n\n<b>💬 Ответ:</b>\n<blockquote expandable>{answer}</blockquote>",
+            "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            "request_label": "<b>📝 Запрос:</b>",
+            "response_label": "<b>💬 Ответ:</b>",
             "thinking_template": "{random}",
             "random_strings": ["Thinking...", "Думаю...", "Генерирую..."],
+            "placeholders": "",
         }
         config_dict = await self.kernel.get_module_config(self.name, defaults)
         if isinstance(config_dict.get("random_strings"), str):
@@ -473,6 +465,7 @@ class OpenAgent(ModuleBase):
                 for line in config_dict["random_strings"].splitlines()
                 if line.strip()
             ] or defaults["random_strings"]
+        config_dict["placeholders"] = self._format_placeholders()
         provider = self._normalize_provider(str(config_dict.get("provider", "openai")))
         config_dict["provider"] = provider if provider in self.PROVIDERS else "openai"
         self.config.from_dict(config_dict)
@@ -481,16 +474,16 @@ class OpenAgent(ModuleBase):
         if clean:
             await self.kernel.save_module_config(self.name, clean)
         self._last_request_at = 0.0
-        self._last_usage: dict[str, int | None] = {
-            "input_tokens": None,
-            "output_tokens": None,
-            "total_tokens": None,
-        }
         self._skills_dir = self._resolve_skills_dir()
         self._chat_history: dict[int, list[dict[str, str]]] = {}
         self._cancelled_generations: set[str] = set()
         self._regen_payloads: dict[str, dict[str, Any]] = {}
         self._direct_callback_payloads: dict[str, dict[str, Any]] = {}
+        self._last_token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
         self._direct_callback_handler = self._handle_direct_callback
         self.client.add_event_handler(
             self._direct_callback_handler,
@@ -533,7 +526,7 @@ class OpenAgent(ModuleBase):
     def _response_title(self, elapsed: float) -> str:
         return self._render_template(
             str(self.config.get("response_header", ""))
-            or "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider} | 🤖 {model} | ⬅️ {input_tokens} ➡️ {output_tokens}",
+            or "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
             elapsed=elapsed,
         )
 
@@ -548,29 +541,17 @@ class OpenAgent(ModuleBase):
             "provider_key": self._provider(),
             "model": self._model(),
             "elapsed": f"{elapsed:.1f}" if elapsed is not None else "0.0",
+            "input_tokens": str(self._last_token_usage.get("input_tokens", 0)),
+            "output_tokens": str(self._last_token_usage.get("output_tokens", 0)),
+            "total_tokens": str(self._last_token_usage.get("total_tokens", 0)),
             "random": random_value,
             "prefix": getattr(self.kernel, "custom_prefix", ".") or ".",
             "time": time.strftime("%H:%M:%S"),
             "date": time.strftime("%Y-%m-%d"),
-            "input_tokens": self._usage_value("input_tokens"),
-            "output_tokens": self._usage_value("output_tokens"),
-            "total_tokens": self._usage_value("total_tokens"),
         }
 
-    def _usage_value(self, key: str) -> str:
-        value = self._last_usage.get(key)
-        return str(value) if isinstance(value, int) and value >= 0 else "n/a"
-
-    def _render_template(
-        self,
-        template: str,
-        *,
-        elapsed: float | None = None,
-        extra: dict[str, str] | None = None,
-    ) -> str:
+    def _render_template(self, template: str, *, elapsed: float | None = None) -> str:
         values = self._placeholder_values(elapsed=elapsed)
-        if extra:
-            values.update({k: str(v) for k, v in extra.items()})
         result = template or ""
         for key, value in values.items():
             result = result.replace("{" + key + "}", str(value))
@@ -581,43 +562,34 @@ class OpenAgent(ModuleBase):
             str(self.config.get("thinking_template", "") or "{random}")
         )
 
-    def _custom_message_template(self) -> str:
-        return str(
-            self.config.get(
-                "message_template",
-                "<b>📝 Запрос:</b>\n<blockquote expandable>{prompt}</blockquote>\n\n<b>💬 Ответ:</b>\n<blockquote expandable>{answer}</blockquote>",
-            )
-            or "<b>📝 Запрос:</b>\n<blockquote expandable>{prompt}</blockquote>\n\n<b>💬 Ответ:</b>\n<blockquote expandable>{answer}</blockquote>"
+    def _format_placeholders(self) -> str:
+        return "\n".join(
+            [
+                "{provider} - Provider label",
+                "{provider_key} - Provider config key",
+                "{model} - Current model",
+                "{elapsed} - Generation time seconds",
+                "{input_tokens} - Input/prompt tokens accepted by provider",
+                "{output_tokens} - Output/completion tokens returned by provider",
+                "{total_tokens} - Total tokens for last provider response",
+                "{random} - Random line from random_strings",
+                "{prefix} - Current command prefix",
+                "{time} - Current local time",
+                "{date} - Current local date",
+            ]
         )
 
-    def _render_custom_message(self, prompt: str, answer: str) -> str:
+    def _request_label(self, *, elapsed: float | None = None) -> str:
         return self._render_template(
-            self._custom_message_template(),
-            extra={"prompt": prompt, "answer": answer},
+            str(self.config.get("request_label", "") or "<b>📝 Запрос:</b>"),
+            elapsed=elapsed,
         )
 
-    def _set_usage_from_response(self, data: dict[str, Any]) -> None:
-        usage = data.get("usage") if isinstance(data, dict) else None
-        if not isinstance(usage, dict):
-            self._last_usage = {
-                "input_tokens": None,
-                "output_tokens": None,
-                "total_tokens": None,
-            }
-            return
-
-        def as_int(*keys: str) -> int | None:
-            for key in keys:
-                value = usage.get(key)
-                if isinstance(value, (int, float)):
-                    return int(value)
-            return None
-
-        self._last_usage = {
-            "input_tokens": as_int("prompt_tokens", "input_tokens"),
-            "output_tokens": as_int("completion_tokens", "output_tokens"),
-            "total_tokens": as_int("total_tokens"),
-        }
+    def _response_label(self, *, elapsed: float | None = None) -> str:
+        return self._render_template(
+            str(self.config.get("response_label", "") or "<b>💬 Ответ:</b>"),
+            elapsed=elapsed,
+        )
 
     def _remember_context(self, chat_id: int | None, prompt: str, answer: str) -> None:
         if not chat_id or not self.config["context_enabled"]:
@@ -2735,6 +2707,26 @@ class OpenAgent(ModuleBase):
             or model.startswith("o4")
         )
 
+    def _set_token_usage(self, usage: dict[str, Any] | None, provider: str) -> None:
+        usage = usage or {}
+        if provider == "google":
+            input_tokens = int(usage.get("promptTokenCount") or 0)
+            output_tokens = int(usage.get("candidatesTokenCount") or 0)
+            total_tokens = int(usage.get("totalTokenCount") or input_tokens + output_tokens)
+        else:
+            input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            output_tokens = int(
+                usage.get("completion_tokens")
+                or usage.get("output_tokens")
+                or 0
+            )
+            total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
+        self._last_token_usage = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+
     async def _ask_openai_compatible(
         self,
         provider: str,
@@ -2779,8 +2771,8 @@ class OpenAgent(ModuleBase):
                 data = await self._post_json(url, payload, headers=headers)
             else:
                 raise
-        self._set_usage_from_response(data)
         try:
+            self._set_token_usage(data.get("usage"), provider)
             return str(data["choices"][0]["message"]["content"]).strip()
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError(f"Unexpected {provider} response: {data}") from exc
@@ -2807,8 +2799,8 @@ class OpenAgent(ModuleBase):
         if system_text:
             payload["systemInstruction"] = {"parts": [{"text": system_text}]}
         data = await self._post_json(url, payload)
-        self._set_usage_from_response(data)
         try:
+            self._set_token_usage(data.get("usageMetadata"), "google")
             parts = data["candidates"][0]["content"]["parts"]
             return "".join(str(part.get("text", "")) for part in parts).strip()
         except (KeyError, IndexError, TypeError) as exc:
@@ -2873,7 +2865,7 @@ class OpenAgent(ModuleBase):
         agent_log: list[str],
         buttons: list[list[Any]] | None = None,
     ) -> None:
-        content = f"{title}\n\n{self._render_custom_message(prompt, answer)}"
+        content = f"{title}\n\nЗапрос:\n{prompt}\n\nОтвет:\n{answer}"
         if agent_log:
             content += "\n\nAgent Log:\n" + "\n".join(agent_log)
         buf = io.BytesIO(content.encode("utf-8"))
@@ -2917,6 +2909,8 @@ class OpenAgent(ModuleBase):
         text = self._sanitize_answer(text or "")
         formatted = self._format_agent_markdown(text)
         formatted_prompt = self._format_agent_markdown(prompt or "")
+        request_label = self._request_label()
+        response_label = self._response_label()
         agent_log_html = self._agent_log_html(agent_log or [])
         if len(formatted) + len(formatted_prompt) + len(agent_log_html) > 3500:
             await self._send_answer_file(event, title, prompt, text or "", agent_log or [], buttons)
@@ -2925,13 +2919,13 @@ class OpenAgent(ModuleBase):
         for index, chunk in enumerate(chunks):
             header = title if index == 0 else f"{title} <i>continued</i>"
             if index == 0:
-                custom_body = self._render_custom_message(formatted_prompt, chunk)
                 body = (
                     f"{header}\n\n"
-                    f"{custom_body}"
+                    f"{request_label}\n<blockquote expandable>{formatted_prompt}</blockquote>\n\n"
+                    f"{response_label}\n<blockquote expandable>{chunk}</blockquote>"
                 )
             else:
-                body = f"{header}\n\n{self._render_custom_message('', chunk)}"
+                body = f"{header}\n\n{response_label}\n<blockquote expandable>{chunk}</blockquote>"
             if index == len(chunks) - 1:
                 body += self._agent_log_html(agent_log or [])
             chat_id = getattr(event, "chat_id", None)
@@ -3257,5 +3251,3 @@ class OpenAgent(ModuleBase):
             return
         path.unlink()
         await self.edit(event, f"Skill deleted: <code>{html.escape(path.stem)}</code>", as_html=True)
-
-# release_size_padding:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
