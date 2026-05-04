@@ -3,9 +3,6 @@
 # repo: https://github.com/hairpin01/repo-MCUB-fork/
 # -- end --
 # SPDX-License-Identifier: MIT
-# author: @dev_dolbaeb
-# version: 0.4.6
-# description: AI agent inside MCUB userbot
 # requires: aiohttp
 # scop: inline
 
