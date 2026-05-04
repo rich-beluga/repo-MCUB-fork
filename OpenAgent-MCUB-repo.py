@@ -71,7 +71,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.7"
+    version = "0.4.8"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
@@ -480,25 +480,12 @@ class OpenAgent(ModuleBase):
         self._chat_history: dict[int, list[dict[str, str]]] = {}
         self._cancelled_generations: set[str] = set()
         self._regen_payloads: dict[str, dict[str, Any]] = {}
-        self._direct_callback_payloads: dict[str, dict[str, Any]] = {}
         self._last_token_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
         }
-        self._direct_callback_handler = self._handle_direct_callback
-        self.client.add_event_handler(
-            self._direct_callback_handler,
-            events.CallbackQuery(pattern=b"^oa:"),
-        )
         self.log.info("OpenAgent loaded")
-
-    async def on_unload(self) -> None:
-        handler = getattr(self, "_direct_callback_handler", None)
-        if handler is not None:
-            with contextlib.suppress(Exception):
-                self.client.remove_event_handler(handler)
-        await super().on_unload()
 
     def _provider(self) -> str:
         provider = str(self.config.get("provider", "openai")).lower().strip()
@@ -3034,33 +3021,6 @@ class OpenAgent(ModuleBase):
         if kind == "regen":
             return self.Button.inline(text, self._regenerate_response, args=(payload.get("token", ""),), style="primary")
         return self.Button.inline(text, self._clear_context, args=(None,), style="danger")
-
-    async def _handle_direct_callback(self, event: Any) -> None:
-        data = getattr(event, "data", b"")
-        if isinstance(data, bytes):
-            data = data.decode("utf-8", errors="replace")
-        data = str(data or "")
-        if not data.startswith("oa:"):
-            return
-        token = data.split(":", 1)[1]
-        entry = self._direct_callback_payloads.get(token)
-        if not entry:
-            with contextlib.suppress(Exception):
-                await event.answer("Кнопка устарела", alert=True)
-            return
-        kind = entry.get("kind")
-        payload = entry.get("payload") or {}
-        if kind == "cancel":
-            await self._cancel_generation(event, payload.get("token", ""))
-            return
-        if kind == "clear":
-            await self._clear_context(event, payload.get("chat_id"))
-            return
-        if kind == "regen":
-            await self._regenerate_response(event, payload.get("token", ""))
-            return
-        with contextlib.suppress(Exception):
-            await event.answer("Unknown OpenAgent action", alert=True)
 
     def _final_buttons(
         self,
