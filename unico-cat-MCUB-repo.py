@@ -156,19 +156,16 @@ def register(kernel):
             error_msg = lang_strings['module_error'].format(str(e))
             await kernel.handle_error(e, source="unico_handler", event=event)
             await event.edit(error_msg)
-
+    @kernel.register.loop(interval=100)
     async def update_unico_cache():
         try:
-            recent_media = await get_media_messages(limit=20)
+            recent_media = await get_media_messages(limit=40)
 
             if recent_media:
-                await kernel.log_debug(
+                kernel.logger.info(
                     lang_strings['cache_updated'].format(len(recent_media))
                 )
 
         except Exception as e:
-            await kernel.log_error(lang_strings['cache_error'].format(e))
+            kernel.logger.error(lang_strings['cache_error'].format(e))
 
-    asyncio.create_task(
-        kernel.scheduler.add_interval_task(update_unico_cache, 14400)
-    )
