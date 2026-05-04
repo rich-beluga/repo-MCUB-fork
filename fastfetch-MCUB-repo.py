@@ -1,17 +1,15 @@
-# author: @Hairpin00
-# version: 1.0.0
-# description: вывод информации о системе через fastfetch
-
 from telethon import events
 import subprocess
-import asyncio
+import core.lib.loader.module_base as loader
 
-def register(kernel):
-    client = kernel.client
-
-    @kernel.register.command('fastfetch')
-    # вывод системной информации
-    async def handler(event):
+class Fastfetch(loader.ModuleBase):
+    name = 'fastfetch'
+    description: dict = {'ru': 'вывод информации о системе через fastfetch', 'en': 'display system information using fastfetch', 'linux': 'cmd: fastfetch on modules'}
+    version = '1.0.0'
+    author = '@Hairpin00'
+    
+    @loader.command('fastfetch')
+    async def cmd_fastfetch(self, event: events.NewMessage.Event) -> None:
         try:
             result = subprocess.run(
                 "fastfetch | sed 's/\\x1B\\[[0-9;?]*[a-zA-Z]//g'",
@@ -35,7 +33,7 @@ def register(kernel):
             if len(output) > 4000:
                 output = output[:4000] + "\n... (вывод обрезан)"
 
-            await event.edit(f'```\n{output}\n```')
+            await event.edit(f'<pre>\n{output}</pre>', parse_mode='html')
 
         except subprocess.TimeoutExpired:
             await event.edit('⛈️ **Таймаут выполнения команды!**')
