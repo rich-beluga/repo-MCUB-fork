@@ -71,7 +71,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.4.6"
+    version = "0.4.7"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с 50+ инструментами",
@@ -204,6 +204,11 @@ class OpenAgent(ModuleBase):
     GET_COMMON_CHATS_RE = re.compile(r"<get_common_chats([^>]*)>(.*?)</get_common_chats>", re.DOTALL | re.I)
     GET_PROFILE_PHOTOS_RE = re.compile(r"<get_profile_photos([^>]*)>(.*?)</get_profile_photos>", re.DOTALL | re.I)
     SCHEDULE_MESSAGE_RE = re.compile(r"<schedule_message([^>]*)>(.*?)</schedule_message>", re.DOTALL | re.I)
+    GENERATED_FILE_RE = re.compile(
+        r'<file\s+name=["\']([^"\']+)["\']\s*>(.*?)</file>',
+        re.DOTALL | re.I,
+    )
+    MCUB_DOCS_URL = "https://x0.at/y2rb.md"
 
     config = ModuleConfig(
         ConfigValue(
@@ -972,6 +977,54 @@ class OpenAgent(ModuleBase):
             if title_text:
                 results.append(f"- {title_text}: {snippet_text}".strip())
         return "\n".join(results) or "No search results found"
+
+    async def _fetch_mcub_docs(self) -> str:
+        timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(self.MCUB_DOCS_URL) as resp:
+                text = await resp.text()
+                if resp.status >= 400:
+                    raise RuntimeError(f"Docs HTTP {resp.status}: {text[:500]}")
+                return text[:60000]
+
+    def _safe_generated_filename(self, filename: str) -> str:
+        filename = Path(filename.strip() or "generated.py").name
+        filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", filename).strip("._")
+        if not filename:
+            filename = "generated.py"
+        if "." not in filename:
+            filename += ".py"
+        return filename[:96]
+
+    def _extract_generated_file(self, answer: str, fallback_name: str = "generated.py") -> tuple[str, str]:
+        match = self.GENERATED_FILE_RE.search(answer or "")
+        if match:
+            return self._safe_generated_filename(match.group(1)), match.group(2).strip("\n")
+
+        fence = re.search(r"```([A-Za-z0-9_+.-]*)\n(.*?)```", answer or "", re.DOTALL)
+        if fence:
+            lang = (fence.group(1) or "").lower()
+            ext = {
+                "python": ".py",
+                "py": ".py",
+                "javascript": ".js",
+                "js": ".js",
+                "typescript": ".ts",
+                "ts": ".ts",
+                "html": ".html",
+                "css": ".css",
+                "json": ".json",
+                "yaml": ".yaml",
+                "yml": ".yml",
+                "bash": ".sh",
+                "sh": ".sh",
+                "sql": ".sql",
+                "md": ".md",
+                "markdown": ".md",
+            }.get(lang, Path(fallback_name).suffix or ".txt")
+            return self._safe_generated_filename("generated" + ext), fence.group(2).strip("\n")
+
+        return self._safe_generated_filename(fallback_name), (answer or "").strip()
 
     def _is_text_file(self, mime_type: str, file_name: str) -> bool:
         if mime_type.startswith("text/"):
@@ -3160,6 +3213,57 @@ class OpenAgent(ModuleBase):
         except Exception as exc:
             self._cancelled_generations.discard(cancel_token)
             await self.kernel.handle_error(exc, source="OpenAgent", event=event)
+            await self.edit(
+                loading or event,
+                html.escape(self.strings("error", error=str(exc))),
+                as_html=True,
+            )
+
+    @command("code", doc_ru="<запрос> сгенерировать код файлом", doc_en="<prompt> generate code file")
+    async def cmd_code(self, event: events.NewMessage.Event) -> None:
+        prompt = self._args_raw(event)
+        if not prompt:
+            await self.edit(event, "Usage: .code <request>")
+            return
+
+        try:
+            loading = await event.edit("<b>🧬 Пишу код...</b>", parse_mode="html")
+        except Exception:
+            loading = await self.edit(event, "<b>🧬 Пишу код...</b>", as_html=True)
+
+        try:
+            docs = await self._fetch_mcub_docs()
+            system = (
+                "You are a senior software engineer and MCUB module developer. "
+                "Generate exactly one complete source file for the user's request. "
+                "If the request is for a MCUB module, use the MCUB documentation below and produce production-ready MCUB code. "
+                "Choose the best filename and extension yourself. "
+                "Return ONLY this exact wrapper and raw code inside it, with no explanations, no Markdown fences, no comments outside code:\n"
+                "<file name=\"chosen_filename.ext\">\n...code...\n</file>\n\n"
+                f"MCUB documentation:\n{docs}"
+            )
+            answer, _agent_log = await self._ask_agent(
+                prompt,
+                status_event=loading or event,
+                source_event=None,
+                system_override=system,
+            )
+            filename, code = self._extract_generated_file(answer)
+            if not code:
+                raise RuntimeError("model returned empty code")
+            buf = io.BytesIO(code.encode("utf-8"))
+            buf.name = filename
+            await self.client.send_file(
+                event.chat_id,
+                buf,
+                caption=f"<b>🧬 Code:</b> <code>{html.escape(filename)}</code>",
+                parse_mode="html",
+                reply_to=getattr(event, "id", None),
+            )
+            with contextlib.suppress(Exception):
+                await (loading or event).delete()
+        except Exception as exc:
+            await self.kernel.handle_error(exc, source="OpenAgent:code", event=event)
             await self.edit(
                 loading or event,
                 html.escape(self.strings("error", error=str(exc))),
