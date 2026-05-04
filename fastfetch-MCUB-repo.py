@@ -1,3 +1,4 @@
+# scop: kernel min v1.2.8
 from telethon import events
 import subprocess
 import core.lib.loader.module_base as loader
