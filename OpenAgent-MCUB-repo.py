@@ -71,7 +71,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.5.0"
+    version = "0.5.1"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с новой архитектурой инструментов",
@@ -777,6 +777,96 @@ class OpenAgent(ModuleBase):
                 if resp.status >= 400:
                     raise RuntimeError(f"Docs HTTP {resp.status}: {text[:500]}")
                 return text[:60000]
+
+    def _format_entity_profile(self, entity: Any) -> str:
+        username = f"@{entity.username}" if getattr(entity, "username", None) else ""
+        name = " ".join(
+            p
+            for p in (
+                getattr(entity, "first_name", None),
+                getattr(entity, "last_name", None),
+            )
+            if p
+        ) or getattr(entity, "title", None) or "Unknown"
+        return (
+            f"Name: {name}\n"
+            f"Username: {username}\n"
+            f"ID: {getattr(entity, 'id', None)}\n"
+            f"Access hash: {getattr(entity, 'access_hash', None)}\n"
+            f"Bot: {getattr(entity, 'bot', None)}\n"
+            f"Verified: {getattr(entity, 'verified', None)}\n"
+            f"Premium: {getattr(entity, 'premium', None)}\n"
+            f"Scam: {getattr(entity, 'scam', None)}\n"
+            f"Fake: {getattr(entity, 'fake', None)}\n"
+            f"Deleted: {getattr(entity, 'deleted', None)}\n"
+            f"Contact: {getattr(entity, 'contact', None)}\n"
+            f"Mutual contact: {getattr(entity, 'mutual_contact', None)}\n"
+            f"Restricted: {getattr(entity, 'restricted', None)}\n"
+            f"Support: {getattr(entity, 'support', None)}\n"
+            f"Bot chat history: {getattr(entity, 'bot_chat_history', None)}\n"
+            f"Bot no chats: {getattr(entity, 'bot_nochats', None)}\n"
+            f"Language code: {getattr(entity, 'lang_code', None)}\n"
+            f"Phone visible: {'yes' if getattr(entity, 'phone', None) else 'no'}\n"
+            f"Photo object: {getattr(entity, 'photo', None)}\n"
+            f"Emoji status: {getattr(entity, 'emoji_status', None)}"
+        )
+
+    async def _format_full_profile(self, entity: Any) -> str:
+        lines = [self._format_entity_profile(entity)]
+        try:
+            full = await self.client(GetFullUserRequest(entity))
+            full_user = getattr(full, "full_user", None)
+            if full_user is not None:
+                lines.append(
+                    "Full profile:\n"
+                    f"About: {getattr(full_user, 'about', None)}\n"
+                    f"Common chats count: {getattr(full_user, 'common_chats_count', None)}\n"
+                    f"Blocked: {getattr(full_user, 'blocked', None)}\n"
+                    f"Phone calls available: {getattr(full_user, 'phone_calls_available', None)}\n"
+                    f"Video calls available: {getattr(full_user, 'video_calls_available', None)}\n"
+                    f"Voice messages forbidden: {getattr(full_user, 'voice_messages_forbidden', None)}\n"
+                    f"Stories pinned available: {getattr(full_user, 'stories_pinned_available', None)}\n"
+                    f"Profile photo: {getattr(full_user, 'profile_photo', None)}"
+                )
+        except Exception as exc:
+            lines.append(f"Full profile unavailable: {exc}")
+
+        try:
+            photos = await self.client.get_profile_photos(entity, limit=1)
+            lines.append(f"Profile photos count fetched: {len(photos)}")
+        except Exception as exc:
+            lines.append(f"Profile photos unavailable: {exc}")
+
+        try:
+            directory = Path.cwd() / "openagent_profiles"
+            directory.mkdir(parents=True, exist_ok=True)
+            path = await self.client.download_profile_photo(
+                entity,
+                file=str(directory / f"profile_{getattr(entity, 'id', 'unknown')}.jpg"),
+            )
+            if path:
+                lines.append(
+                    "Avatar: Telegram does not expose a permanent public avatar URL via client API.\n"
+                    f"Avatar local file: {path}"
+                )
+            else:
+                lines.append("Avatar: no accessible profile photo")
+        except Exception as exc:
+            lines.append(f"Avatar download failed: {exc}")
+
+        try:
+            common = await self.client.get_common_chats(entity, limit=10)
+            if common:
+                formatted = []
+                for chat in common:
+                    title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "Unknown"
+                    username = f"@{chat.username}" if getattr(chat, "username", None) else ""
+                    formatted.append(f"{title} {username} [id={getattr(chat, 'id', None)}]".strip())
+                lines.append("Common chats:\n" + "\n".join(formatted))
+        except Exception:
+            pass
+
+        return "\n\n".join(lines)
 
     def _safe_generated_filename(self, filename: str) -> str:
         filename = Path(filename.strip() or "generated.py").name
