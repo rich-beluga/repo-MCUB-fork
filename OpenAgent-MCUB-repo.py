@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 import aiohttp
-from telethon import Button, events
+from telethon import events
 from telethon.tl.functions.account import (
     UpdateProfileRequest,
     UpdateUsernameRequest as UpdateAccountUsernameRequest,
@@ -534,7 +534,7 @@ class OpenAgent(ModuleBase):
             "output_tokens": str(self._last_token_usage.get("output_tokens", 0)),
             "total_tokens": str(self._last_token_usage.get("total_tokens", 0)),
             "random": random_value,
-            "prefix": getattr(self.kernel, "custom_prefix", ".") or ".",
+            "prefix": self.get_prefix() or ".",
             "time": time.strftime("%H:%M:%S"),
             "date": time.strftime("%Y-%m-%d"),
         }
@@ -1262,7 +1262,7 @@ class OpenAgent(ModuleBase):
         command = command.strip()
         if not command:
             return "Empty MCUB command"
-        prefix = getattr(self.kernel, "custom_prefix", ".") or "."
+        prefix = self.get_prefix() or "."
         if not command.startswith(prefix):
             command = prefix + command
 
@@ -2105,6 +2105,70 @@ class OpenAgent(ModuleBase):
         except Exception:
             await self.edit(event, html.escape(title), as_html=True)
 
+    def _clean_tool_markup(self, answer: str | None) -> str:
+        clean_answer = answer or ""
+        for regex in (
+            self.TERMINAL_RE,
+            self.WEB_SEARCH_RE,
+            self.MCUB_RE,
+            self.SEND_RE,
+            self.DIALOGS_RE,
+            self.SKILL_RE,
+            self.CHAT_RE,
+            self.PROFILE_RE,
+            self.CREATE_CHANNEL_RE,
+            self.CREATE_GROUP_RE,
+            self.CREATE_BOT_RE,
+            self.HISTORY_RE,
+            self.SEARCH_MESSAGES_RE,
+            self.UPDATE_PROFILE_RE,
+            self.SET_PROFILE_PHOTO_RE,
+            self.JOIN_CHAT_RE,
+            self.PIN_MESSAGE_RE,
+            self.DELETE_MESSAGES_RE,
+            self.FORWARD_MESSAGE_RE,
+            self.DOWNLOAD_MEDIA_RE,
+            self.SEND_FILE_RE,
+            self.MUTE_USER_RE,
+            self.UNMUTE_USER_RE,
+            self.BAN_USER_RE,
+            self.UNBAN_USER_RE,
+            self.KICK_USER_RE,
+            self.PROMOTE_USER_RE,
+            self.DEMOTE_USER_RE,
+            self.SET_SLOWMODE_RE,
+            self.SET_CHAT_TITLE_RE,
+            self.SET_CHAT_ABOUT_RE,
+            self.GET_ME_RE,
+            self.GET_ENTITY_RE,
+            self.GET_ADMINS_RE,
+            self.EXPORT_INVITE_RE,
+            self.MARK_READ_RE,
+            self.ARCHIVE_DIALOG_RE,
+            self.UNARCHIVE_DIALOG_RE,
+            self.LEAVE_CHAT_RE,
+            self.BLOCK_USER_RE,
+            self.UNBLOCK_USER_RE,
+            self.ADD_CONTACT_RE,
+            self.DELETE_CONTACT_RE,
+            self.SAVE_DRAFT_RE,
+            self.EDIT_MESSAGE_RE,
+            self.REPLY_MESSAGE_RE,
+            self.REACT_MESSAGE_RE,
+            self.TYPING_RE,
+            self.GET_MESSAGE_RE,
+            self.SET_CHAT_USERNAME_RE,
+            self.SET_CHAT_PHOTO_RE,
+            self.GET_CHAT_PHOTO_RE,
+            self.SEARCH_DIALOGS_RE,
+            self.GET_PERMISSIONS_RE,
+            self.GET_COMMON_CHATS_RE,
+            self.GET_PROFILE_PHOTOS_RE,
+            self.SCHEDULE_MESSAGE_RE,
+        ):
+            clean_answer = regex.sub("", clean_answer).strip()
+        return clean_answer
+
     async def _ask_agent(
         self,
         prompt: str,
@@ -2603,129 +2667,9 @@ class OpenAgent(ModuleBase):
             if handled_misc_tool:
                 continue
 
-            clean_answer = self.TERMINAL_RE.sub("", answer or "")
-            clean_answer = self.WEB_SEARCH_RE.sub("", clean_answer).strip()
-            clean_answer = self.MCUB_RE.sub("", clean_answer).strip()
-            clean_answer = self.SEND_RE.sub("", clean_answer).strip()
-            clean_answer = self.DIALOGS_RE.sub("", clean_answer).strip()
-            clean_answer = self.SKILL_RE.sub("", clean_answer).strip()
-            clean_answer = self.CHAT_RE.sub("", clean_answer).strip()
-            clean_answer = self.PROFILE_RE.sub("", clean_answer).strip()
-            clean_answer = self.CREATE_CHANNEL_RE.sub("", clean_answer).strip()
-            clean_answer = self.CREATE_GROUP_RE.sub("", clean_answer).strip()
-            clean_answer = self.CREATE_BOT_RE.sub("", clean_answer).strip()
-            clean_answer = self.HISTORY_RE.sub("", clean_answer).strip()
-            clean_answer = self.SEARCH_MESSAGES_RE.sub("", clean_answer).strip()
-            clean_answer = self.UPDATE_PROFILE_RE.sub("", clean_answer).strip()
-            clean_answer = self.SET_PROFILE_PHOTO_RE.sub("", clean_answer).strip()
-            clean_answer = self.JOIN_CHAT_RE.sub("", clean_answer).strip()
-            clean_answer = self.PIN_MESSAGE_RE.sub("", clean_answer).strip()
-            clean_answer = self.DELETE_MESSAGES_RE.sub("", clean_answer).strip()
-            clean_answer = self.FORWARD_MESSAGE_RE.sub("", clean_answer).strip()
-            clean_answer = self.DOWNLOAD_MEDIA_RE.sub("", clean_answer).strip()
-            clean_answer = self.SEND_FILE_RE.sub("", clean_answer).strip()
-            clean_answer = self.MUTE_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.UNMUTE_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.BAN_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.UNBAN_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.KICK_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.PROMOTE_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.DEMOTE_USER_RE.sub("", clean_answer).strip()
-            clean_answer = self.SET_SLOWMODE_RE.sub("", clean_answer).strip()
-            clean_answer = self.SET_CHAT_TITLE_RE.sub("", clean_answer).strip()
-            clean_answer = self.SET_CHAT_ABOUT_RE.sub("", clean_answer).strip()
-            for regex in (
-                self.GET_ME_RE,
-                self.GET_ENTITY_RE,
-                self.GET_ADMINS_RE,
-                self.EXPORT_INVITE_RE,
-                self.MARK_READ_RE,
-                self.ARCHIVE_DIALOG_RE,
-                self.UNARCHIVE_DIALOG_RE,
-                self.LEAVE_CHAT_RE,
-                self.BLOCK_USER_RE,
-                self.UNBLOCK_USER_RE,
-                self.ADD_CONTACT_RE,
-                self.DELETE_CONTACT_RE,
-                self.SAVE_DRAFT_RE,
-                self.EDIT_MESSAGE_RE,
-                self.REPLY_MESSAGE_RE,
-                self.REACT_MESSAGE_RE,
-                self.TYPING_RE,
-                self.GET_MESSAGE_RE,
-                self.SET_CHAT_USERNAME_RE,
-                self.SET_CHAT_PHOTO_RE,
-                self.GET_CHAT_PHOTO_RE,
-                self.SEARCH_DIALOGS_RE,
-                self.GET_PERMISSIONS_RE,
-                self.GET_COMMON_CHATS_RE,
-                self.GET_PROFILE_PHOTOS_RE,
-                self.SCHEDULE_MESSAGE_RE,
-            ):
-                clean_answer = regex.sub("", clean_answer).strip()
-            return clean_answer, agent_log
+            return self._clean_tool_markup(answer), agent_log
 
-        clean_answer = self.TERMINAL_RE.sub("", answer or "")
-        clean_answer = self.WEB_SEARCH_RE.sub("", clean_answer).strip()
-        clean_answer = self.MCUB_RE.sub("", clean_answer).strip()
-        clean_answer = self.SEND_RE.sub("", clean_answer).strip()
-        clean_answer = self.DIALOGS_RE.sub("", clean_answer).strip()
-        clean_answer = self.SKILL_RE.sub("", clean_answer).strip()
-        clean_answer = self.CHAT_RE.sub("", clean_answer).strip()
-        clean_answer = self.PROFILE_RE.sub("", clean_answer).strip()
-        clean_answer = self.CREATE_CHANNEL_RE.sub("", clean_answer).strip()
-        clean_answer = self.CREATE_GROUP_RE.sub("", clean_answer).strip()
-        clean_answer = self.CREATE_BOT_RE.sub("", clean_answer).strip()
-        clean_answer = self.HISTORY_RE.sub("", clean_answer).strip()
-        clean_answer = self.SEARCH_MESSAGES_RE.sub("", clean_answer).strip()
-        clean_answer = self.UPDATE_PROFILE_RE.sub("", clean_answer).strip()
-        clean_answer = self.SET_PROFILE_PHOTO_RE.sub("", clean_answer).strip()
-        clean_answer = self.JOIN_CHAT_RE.sub("", clean_answer).strip()
-        clean_answer = self.PIN_MESSAGE_RE.sub("", clean_answer).strip()
-        clean_answer = self.DELETE_MESSAGES_RE.sub("", clean_answer).strip()
-        clean_answer = self.FORWARD_MESSAGE_RE.sub("", clean_answer).strip()
-        clean_answer = self.DOWNLOAD_MEDIA_RE.sub("", clean_answer).strip()
-        clean_answer = self.SEND_FILE_RE.sub("", clean_answer).strip()
-        clean_answer = self.MUTE_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.UNMUTE_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.BAN_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.UNBAN_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.KICK_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.PROMOTE_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.DEMOTE_USER_RE.sub("", clean_answer).strip()
-        clean_answer = self.SET_SLOWMODE_RE.sub("", clean_answer).strip()
-        clean_answer = self.SET_CHAT_TITLE_RE.sub("", clean_answer).strip()
-        clean_answer = self.SET_CHAT_ABOUT_RE.sub("", clean_answer).strip()
-        for regex in (
-            self.GET_ME_RE,
-            self.GET_ENTITY_RE,
-            self.GET_ADMINS_RE,
-            self.EXPORT_INVITE_RE,
-            self.MARK_READ_RE,
-            self.ARCHIVE_DIALOG_RE,
-            self.UNARCHIVE_DIALOG_RE,
-            self.LEAVE_CHAT_RE,
-            self.BLOCK_USER_RE,
-            self.UNBLOCK_USER_RE,
-            self.ADD_CONTACT_RE,
-            self.DELETE_CONTACT_RE,
-            self.SAVE_DRAFT_RE,
-            self.EDIT_MESSAGE_RE,
-            self.REPLY_MESSAGE_RE,
-            self.REACT_MESSAGE_RE,
-            self.TYPING_RE,
-            self.GET_MESSAGE_RE,
-            self.SET_CHAT_USERNAME_RE,
-            self.SET_CHAT_PHOTO_RE,
-            self.GET_CHAT_PHOTO_RE,
-            self.SEARCH_DIALOGS_RE,
-            self.GET_PERMISSIONS_RE,
-            self.GET_COMMON_CHATS_RE,
-            self.GET_PROFILE_PHOTOS_RE,
-            self.SCHEDULE_MESSAGE_RE,
-        ):
-            clean_answer = regex.sub("", clean_answer).strip()
-        return clean_answer, agent_log
+        return self._clean_tool_markup(answer), agent_log
 
     def _agent_log_html(self, log: list[str]) -> str:
         if not log:
@@ -2737,12 +2681,7 @@ class OpenAgent(ModuleBase):
 
     def _uses_completion_tokens(self, provider: str) -> bool:
         model = self._model(provider).lower()
-        return provider == "openai" and (
-            model.startswith("gpt-5")
-            or model.startswith("o1")
-            or model.startswith("o3")
-            or model.startswith("o4")
-        )
+        return provider == "openai" and model.startswith(("gpt-5", "o1", "o3", "o4"))
 
     def _set_token_usage(self, usage: dict[str, Any] | None, provider: str) -> None:
         usage = usage or {}
