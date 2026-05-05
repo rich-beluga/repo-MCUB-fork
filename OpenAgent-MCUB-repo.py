@@ -164,7 +164,7 @@ class OpenAgent(ModuleBase):
         re.DOTALL | re.I,
     )
     MCUB_DOCS_URL = "https://x0.at/y2rb.md"
-    TOOL_CALL_RE = re.compile(r"<([a-z0-9._]+)([^>]*)>(.*?)</\\1>|<([a-z0-9._]+)([^>]*)/?>", re.DOTALL | re.I)
+    TOOL_CALL_RE = re.compile(r"<([a-z0-9._]+)([^>]*)>(.*?)</\1>|<([a-z0-9._]+)([^>]*)/?>", re.DOTALL | re.I)
     TOOL_REGISTRY = (
         "terminal.run", "terminal.inspect", "terminal.list_files", "terminal.read_file", "terminal.git_status",
         "web.search", "web.fetch_url", "web.read_html", "web.extract_links", "web.summarize_page",
@@ -662,9 +662,9 @@ class OpenAgent(ModuleBase):
             "\nCore guidelines:\n"
             "1. Use terminal.run for shell commands (cwd is dynamic).\n"
             "2. Use web.search for search or web.fetch_url for direct page reading.\n"
-            "3. Use message.send for sending messages.\n"
+            "3. Use message.send_current or message.send_target for sending messages.\n"
             "4. Use chat.* and profile.* for management.\n"
-            "5. If you need to create a skill for later use, use skill.save.\n"
+            "5. If you need to create a skill for later use, use skills.save_from_ai.\n"
             "Never explain the tool call. Just output it and wait for results."
         )
         prompt += self._load_skills_prompt()
@@ -2649,25 +2649,150 @@ class OpenAgent(ModuleBase):
         await self.edit(event, f"Skill deleted: <code>{html.escape(path.stem)}</code>", as_html=True)
 
 
+    def _tool_attr_or_body(self, attrs_raw: str, body: str, *keys: str) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        for key in keys:
+            value = attrs.get(key)
+            if value:
+                return value.strip()
+        return (body or "").strip()
+
+    async def _terminal_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        """Handle structured terminal.* aliases advertised to the model."""
+        attrs = self._parse_xml_attrs(attrs_raw)
+        if tool_name == "terminal.git_status":
+            return await self._run_terminal("git status --short")
+        if tool_name == "terminal.list_files":
+            path = attrs.get("path") or body.strip() or "."
+            return await self._run_terminal(f"python - <<'PY'\nfrom pathlib import Path\np=Path({path!r})\nprint('\\n'.join(sorted(x.name + ('/' if x.is_dir() else '') for x in p.iterdir())))\nPY")
+        if tool_name == "terminal.read_file":
+            path = attrs.get("path") or attrs.get("file") or body.strip()
+            if not path:
+                return "path is required"
+            return await self._run_terminal(f"python - <<'PY'\nfrom pathlib import Path\np=Path({path!r})\nprint(p.read_text(encoding='utf-8', errors='replace')[:12000])\nPY")
+        if tool_name == "terminal.inspect":
+            command = body.strip() or attrs.get("command") or attrs.get("cmd") or "pwd"
+            return await self._run_terminal(command)
+        return await self._run_terminal(body.strip())
+
+    async def _file_read_text_tool(self, attrs_raw: str, body: str) -> str:
+        path_raw = self._tool_attr_or_body(attrs_raw, body, "path", "file", "name")
+        if not path_raw:
+            return "File path is required"
+        path = Path(path_raw).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            if not path.is_file():
+                return f"File not found: {path}"
+            return path.read_text(encoding="utf-8", errors="replace")[:12000]
+        except Exception as exc:
+            return f"Could not read file: {exc}"
+
+    async def _skills_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        if tool_name == "skills.list":
+            skills = self._list_skills()
+            return "\n".join(path.stem for path in skills) or "No OpenAgent skills installed"
+        if tool_name in {"skills.read", "skills.export_md"}:
+            name = attrs.get("name") or body.strip()
+            if not name:
+                return "skill name is required"
+            path = self._skill_path(name)
+            if not path.exists():
+                return "Skill not found"
+            return path.read_text(encoding="utf-8", errors="replace")[:12000]
+        if tool_name in {"skills.save_from_ai", "skills.import_md", "skill.save", "skill"}:
+            name = attrs.get("name") or attrs.get("title") or "skill"
+            if not body.strip():
+                return "skill content is empty"
+            saved = await self._save_skill(name, body)
+            return f"Skill saved: {saved}"
+        return f"Unknown skills tool: {tool_name}"
+
+    async def _context_registry_tool(self, tool_name: str, attrs_raw: str, body: str, source_event: Any | None) -> str:
+        chat_id = getattr(source_event, "chat_id", None) if source_event is not None else None
+        if tool_name == "context.clear":
+            if chat_id is not None:
+                self._chat_history.pop(int(chat_id), None)
+            return "Context cleared"
+        if tool_name == "context.remember":
+            if chat_id is None:
+                return "No chat context available"
+            self._remember_context(chat_id, "Memory note", body.strip())
+            return "Remembered in current chat context"
+        if tool_name in {"context.reply_context", "context.media_context"} and source_event is not None:
+            reply_context, _attachments = await self._reply_context(source_event)
+            return reply_context or "No reply/media context available"
+        if tool_name == "context.regenerate":
+            return "Use the regenerate button under the last OpenAgent response"
+        return f"Unknown context tool: {tool_name}"
+
+    async def _utility_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        if tool_name == "utility.placeholders":
+            return self._format_placeholders()
+        if tool_name == "utility.random_template":
+            return self._thinking_text()
+        if tool_name == "utility.token_usage":
+            usage = self._last_token_usage
+            return "\n".join(f"{key}: {value}" for key, value in usage.items())
+        if tool_name == "utility.agent_log":
+            return "Agent log is shown under the final answer when tools are used"
+        if tool_name == "utility.error_file":
+            return "Errors are reported through the MCUB kernel error handler"
+        return f"Unknown utility tool: {tool_name}"
+
+
     def _get_tool_map(self) -> dict[str, str]:
         """Unified mapping of tool tags to internal methods."""
         return {
             "terminal": "_run_terminal",
             "terminal.run": "_run_terminal",
+            "terminal.inspect": "_terminal_registry_tool",
+            "terminal.list_files": "_terminal_registry_tool",
+            "terminal.read_file": "_terminal_registry_tool",
+            "terminal.git_status": "_terminal_registry_tool",
             "web_search": "_web_search",
             "web.search": "_web_search",
+            "web.fetch_url": "_web_search",
+            "web.read_html": "_web_search",
+            "web.extract_links": "_web_search",
+            "web.summarize_page": "_web_search",
             "mcub": "_run_mcub_command",
             "mcub.command": "_run_mcub_command",
+            "mcub.config": "_run_mcub_command",
+            "mcub.modules": "_run_mcub_command",
+            "mcub.install": "_run_mcub_command",
+            "mcub.reload": "_run_mcub_command",
             "send_message": "_send_userbot_message",
             "message.send": "_send_userbot_message",
+            "message.send_current": "_send_userbot_message",
+            "message.send_target": "_send_userbot_message",
             "dialogs": "_dialogs_tool",
             "dialog.list": "_dialogs_tool",
+            "dialog.list_private": "_dialogs_tool",
+            "dialog.list_groups": "_dialogs_tool",
+            "dialog.list_all": "_dialogs_tool",
             "skill": "_save_skill",
             "skill.save": "_save_skill",
+            "skills.list": "_skills_registry_tool",
+            "skills.read": "_skills_registry_tool",
+            "skills.import_md": "_skills_registry_tool",
+            "skills.export_md": "_skills_registry_tool",
+            "skills.save_from_ai": "_skills_registry_tool",
             "chat": "_chat_tool",
             "chat.info": "_chat_tool",
+            "chat.participants": "_chat_tool",
+            "chat.admins": "_misc_tool",
+            "moderation.get_admins": "_misc_tool",
+            "chat.permissions": "_misc_tool",
+            "chat.common_with_user": "_misc_tool",
             "profile": "_profile_tool",
             "profile.get": "_profile_tool",
+            "profile.get_full": "_profile_tool",
+            "profile.get_me": "_misc_tool",
+            "profile.get_photos": "_misc_tool",
+            "profile.common_chats": "_misc_tool",
             "profile.set_photo": "_set_profile_photo_tool",
             "set_profile_photo": "_set_profile_photo_tool",
             "create_channel": "_create_channel_or_group",
@@ -2677,51 +2802,127 @@ class OpenAgent(ModuleBase):
             "create_bot": "_create_bot_via_botfather",
             "creation.bot": "_create_bot_via_botfather",
             "history": "_history_tool",
+            "message.history": "_history_tool",
             "search_messages": "_search_messages_tool",
+            "message.search": "_search_messages_tool",
             "update_profile": "_update_profile_tool",
             "profile.update": "_update_profile_tool",
+            "profile.update_name": "_update_profile_tool",
+            "profile.update_bio": "_update_profile_tool",
+            "profile.update_username": "_update_profile_tool",
             "join_chat": "_join_chat_tool",
             "pin_message": "_pin_message_tool",
             "message.pin": "_pin_message_tool",
+            "moderation.pin": "_pin_message_tool",
             "delete_messages": "_delete_messages_tool",
             "message.delete": "_delete_messages_tool",
+            "moderation.delete_messages": "_delete_messages_tool",
             "forward_message": "_forward_message_tool",
             "message.forward": "_forward_message_tool",
             "download_media": "_download_media_tool",
             "file.download": "_download_media_tool",
+            "file.download_media": "_download_media_tool",
             "send_file": "_send_file_tool",
             "file.send": "_send_file_tool",
+            "file.read_text": "_file_read_text_tool",
             "mute_user": "_mute_user_tool",
             "chat.mute": "_mute_user_tool",
+            "moderation.mute": "_mute_user_tool",
             "unmute_user": "_unmute_user_tool",
             "chat.unmute": "_unmute_user_tool",
+            "moderation.unmute": "_unmute_user_tool",
             "ban_user": "_ban_user_tool",
             "chat.ban": "_ban_user_tool",
+            "moderation.ban": "_ban_user_tool",
             "unban_user": "_unban_user_tool",
             "chat.unban": "_unban_user_tool",
+            "moderation.unban": "_unban_user_tool",
             "kick_user": "_kick_user_tool",
             "chat.kick": "_kick_user_tool",
+            "moderation.kick": "_kick_user_tool",
             "promote_user": "_promote_user_tool",
             "chat.promote": "_promote_user_tool",
+            "moderation.promote": "_promote_user_tool",
             "demote_user": "_demote_user_tool",
             "chat.demote": "_demote_user_tool",
+            "moderation.demote": "_demote_user_tool",
             "set_slowmode": "_set_slowmode_tool",
             "chat.slowmode": "_set_slowmode_tool",
             "set_chat_title": "_set_chat_title_tool",
             "chat.set_title": "_set_chat_title_tool",
             "set_chat_about": "_set_chat_about_tool",
             "chat.set_about": "_set_chat_about_tool",
-            "banned_users": "_banned_users_tool",
-            "chat.banned": "_banned_users_tool",
-            "unban_all": "_unban_all_tool",
-            "chat.unban_all": "_unban_all_tool",
-            "blocked_users": "_misc_tool",
-            "account.blocked": "_misc_tool",
+            "dialog.search": "_misc_tool",
+            "dialog.archive": "_misc_tool",
+            "dialog.unarchive": "_misc_tool",
+            "dialog.leave": "_misc_tool",
+            "dialog.export_invite": "_misc_tool",
+            "dialog.get_photo": "_misc_tool",
+            "dialog.set_photo": "_misc_tool",
+            "chat.set_username": "_misc_tool",
+            "chat.invite_link": "_misc_tool",
+            "message.edit": "_misc_tool",
+            "message.reply": "_misc_tool",
+            "message.react": "_misc_tool",
+            "message.get": "_misc_tool",
+            "message.mark_read": "_misc_tool",
+            "message.typing": "_misc_tool",
+            "message.schedule": "_misc_tool",
+            "message.draft": "_misc_tool",
+            "contacts.add": "_misc_tool",
+            "contacts.delete": "_misc_tool",
+            "contacts.block": "_misc_tool",
+            "contacts.unblock": "_misc_tool",
+            "contacts.entity": "_misc_tool",
+            "profile.download_photo": "_misc_tool",
+            "context.remember": "_context_registry_tool",
+            "context.clear": "_context_registry_tool",
+            "context.regenerate": "_context_registry_tool",
+            "context.reply_context": "_context_registry_tool",
+            "context.media_context": "_context_registry_tool",
+            "code.read_docs": "_fetch_mcub_docs",
+            "utility.token_usage": "_utility_registry_tool",
+            "utility.placeholders": "_utility_registry_tool",
+            "utility.random_template": "_utility_registry_tool",
+            "utility.agent_log": "_utility_registry_tool",
+            "utility.error_file": "_utility_registry_tool",
         }
 
     async def _dispatch_tool(self, name: str, attrs_raw: str, body: str, source_event: Any, status_event: Any, agent_log: list[str]) -> str:
         name = name.lower().strip()
         tmap = self._get_tool_map()
+        misc_aliases = {
+            "chat.admins": "get_admins",
+            "moderation.get_admins": "get_admins",
+            "chat.permissions": "get_permissions",
+            "chat.common_with_user": "get_common_chats",
+            "profile.get_me": "get_me",
+            "profile.get_photos": "get_profile_photos",
+            "profile.common_chats": "get_common_chats",
+            "dialog.search": "search_dialogs",
+            "dialog.archive": "archive_dialog",
+            "dialog.unarchive": "unarchive_dialog",
+            "dialog.leave": "leave_chat",
+            "dialog.export_invite": "export_invite",
+            "dialog.get_photo": "get_chat_photo",
+            "dialog.set_photo": "set_chat_photo",
+            "chat.set_username": "set_chat_username",
+            "chat.invite_link": "export_invite",
+            "message.edit": "edit_message",
+            "message.reply": "reply_message",
+            "message.react": "react_message",
+            "message.get": "get_message",
+            "message.mark_read": "mark_read",
+            "message.typing": "typing",
+            "message.schedule": "schedule_message",
+            "message.draft": "save_draft",
+            "contacts.add": "add_contact",
+            "contacts.delete": "delete_contact",
+            "contacts.block": "block_user",
+            "contacts.unblock": "unblock_user",
+            "contacts.entity": "get_entity",
+            "profile.download_photo": "get_profile_photos",
+        }
         
         # 1. Direct match or alias
         method_name = tmap.get(name)
@@ -2742,6 +2943,7 @@ class OpenAgent(ModuleBase):
         
         if method_name:
             handler_method = getattr(self, method_name, None)
+            is_misc = method_name == "_misc_tool"
         elif name in misc_tools:
             handler_method = self._misc_tool
             is_misc = True
@@ -2761,19 +2963,43 @@ class OpenAgent(ModuleBase):
             
             kwargs = {}
             if is_misc:
-                return await handler_method(name, attrs_raw, body, source_event)
+                return await handler_method(misc_aliases.get(name, name), attrs_raw, body, source_event)
             
+            if "tool_name" in params: kwargs["tool_name"] = name
             if "attrs_raw" in params: kwargs["attrs_raw"] = attrs_raw
             if "body" in params: kwargs["body"] = body
             if "source_event" in params: kwargs["source_event"] = source_event
-            if "kind" in params: kwargs["kind"] = name.split(".")[-1] # for _create_channel_or_group
+            if "kind" in params:
+                kwargs["kind"] = "group" if name.endswith("group") else "channel"
             if "command" in params: kwargs["command"] = body.strip() # for _run_terminal
             if "query" in params: kwargs["query"] = body.strip() or attrs_raw # fallback
+            if "mode" in params:
+                if name.endswith("list_groups"):
+                    kwargs["mode"] = "groups"
+                elif name.endswith("list_all"):
+                    kwargs["mode"] = "all"
+                else:
+                    kwargs["mode"] = body.strip() or self._parse_xml_attrs(attrs_raw).get("mode") or "private"
+            if "target" in params: kwargs["target"] = body.strip() or self._parse_xml_attrs(attrs_raw).get("target", "")
             
             # Special case for send_message (it doesnt use body/attrs_raw directly in sig)
             if method_name == "_send_userbot_message":
                 attrs = self._parse_xml_attrs(attrs_raw)
-                return await self._send_userbot_message(body.strip(), source_event, chat=attrs.get("chat"))
+                chat = attrs.get("chat") or attrs.get("to") or attrs.get("target")
+                if name == "message.send_current":
+                    chat = None
+                return await self._send_userbot_message(body.strip(), source_event, chat=chat)
+            if method_name == "_run_mcub_command" and not kwargs.get("command"):
+                command_map = {
+                    "mcub.modules": "modules",
+                    "mcub.config": "cfg",
+                    "mcub.install": "dlm",
+                    "mcub.reload": "restart",
+                }
+                kwargs["command"] = command_map.get(name, "")
+            if method_name == "_save_skill":
+                attrs = self._parse_xml_attrs(attrs_raw)
+                return await self._skills_registry_tool(name, attrs_raw, body or attrs.get("content", ""))
 
             return await handler_method(**kwargs)
         except Exception as e:
