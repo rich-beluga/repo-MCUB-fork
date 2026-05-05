@@ -157,7 +157,7 @@ def register(kernel):
             await kernel.handle_error(e, source="unico_handler", event=event)
             await event.edit(error_msg)
     @kernel.register.loop(interval=100)
-    async def update_unico_cache():
+    async def update_unico_cache(kernel):
         try:
             recent_media = await get_media_messages(limit=40)
 
