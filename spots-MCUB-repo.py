@@ -39,7 +39,7 @@ CUSTOM_EMOJI: dict[str, str] = {
 
 class SpotsModule(ModuleBase):
     name = "spots-MCUB-repo"
-    version = "1.1.2"
+    version = "1.2.2"
     author = "@LoLpryvet && порт: @Hairpin00"
     description: dict[str, str] = {
         "ru": "Слушай музыку в Spotify",
