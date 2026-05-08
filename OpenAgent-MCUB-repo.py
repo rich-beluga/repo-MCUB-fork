@@ -19,6 +19,7 @@ import re
 import tempfile
 import time
 import uuid
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -397,6 +398,18 @@ class OpenAgent(ModuleBase):
             description="Available OpenAgent placeholders (auto-generated)",
             validator=String(default=""),
         ),
+        ConfigValue(
+            "repo_context_enabled",
+            True,
+            description="Inject local workspace snapshot into system prompt",
+            validator=Boolean(default=True),
+        ),
+        ConfigValue(
+            "repo_context_max_chars",
+            7000,
+            description="Maximum chars used for repo context in system prompt",
+            validator=Integer(default=7000, min=500, max=30000),
+        ),
     )
 
     async def on_load(self) -> None:
@@ -439,6 +452,8 @@ class OpenAgent(ModuleBase):
             "thinking_template": "{random}",
             "random_strings": ["Thinking...", "Думаю...", "Генерирую..."],
             "placeholders": "",
+            "repo_context_enabled": True,
+            "repo_context_max_chars": 7000,
         }
         config_dict = await self.kernel.get_module_config(self.name, defaults)
         if isinstance(config_dict.get("random_strings"), str):
@@ -614,6 +629,65 @@ class OpenAgent(ModuleBase):
                 return str(path)
         return str(Path.cwd())
 
+    def _repo_context_prompt(self) -> str:
+        if not bool(self.config.get("repo_context_enabled", True)):
+            return ""
+        workspace = Path(self._workspace_dir())
+        max_chars = int(self.config.get("repo_context_max_chars", 7000) or 7000)
+        lines: list[str] = [f"Workspace: {workspace}"]
+        try:
+            entries = sorted(
+                workspace.iterdir(),
+                key=lambda p: (p.is_file(), p.name.lower()),
+            )
+            top = []
+            for item in entries[:80]:
+                marker = "/" if item.is_dir() else ""
+                top.append(item.name + marker)
+            if top:
+                lines.append("Top-level:")
+                lines.extend(f"- {name}" for name in top)
+        except Exception as exc:
+            lines.append(f"Top-level unavailable: {exc}")
+            return "\n".join(lines)[:max_chars]
+
+        key_files = ["README.md", "pyproject.toml", "requirements.txt", "config.example.json", "modules.ini"]
+        for name in key_files:
+            file_path = workspace / name
+            if not file_path.is_file():
+                continue
+            try:
+                text = file_path.read_text(encoding="utf-8", errors="replace").strip()
+            except Exception as exc:
+                lines.append(f"{name}: read error: {exc}")
+                continue
+            if name.endswith(".json"):
+                try:
+                    obj = json.loads(text)
+                    short = json.dumps(obj, ensure_ascii=False, indent=2)[:1200]
+                except Exception:
+                    short = text[:1200]
+            else:
+                short = text[:1200]
+            lines.append(f"{name}:\n{short}")
+
+        module_dirs = [workspace / "modules", workspace / "modules_loaded"]
+        for mdir in module_dirs:
+            if not mdir.is_dir():
+                continue
+            try:
+                mod_names = sorted(p.name for p in mdir.iterdir() if p.is_file())[:120]
+            except Exception as exc:
+                lines.append(f"{mdir.name}: unavailable: {exc}")
+                continue
+            lines.append(f"{mdir.name} files ({len(mod_names)} shown):")
+            lines.extend(f"- {mn}" for mn in mod_names)
+
+        text = "\n".join(lines)
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n... [repo context truncated]"
+        return "\n\nLocal MCUB workspace snapshot:\n" + text
+
     def _safe_skill_name(self, name: str) -> str:
         name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", name.strip()).strip("._")
         return name[:64] or "skill"
@@ -668,6 +742,7 @@ class OpenAgent(ModuleBase):
             "Never explain the tool call. Just output it and wait for results."
         )
         prompt += self._load_skills_prompt()
+        prompt += self._repo_context_prompt()
         return prompt
 
     async def _run_terminal(self, command: str) -> str:
