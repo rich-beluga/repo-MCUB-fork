@@ -363,6 +363,24 @@ class OpenAgent(ModuleBase):
             validator=Integer(default=10, min=0, max=50),
         ),
         ConfigValue(
+            "tool_memory_enabled",
+            False,
+            description="Remember concise notes from tool outputs for next requests",
+            validator=Boolean(default=False),
+        ),
+        ConfigValue(
+            "tool_memory_items",
+            20,
+            description="Maximum remembered tool notes per chat",
+            validator=Integer(default=20, min=1, max=200),
+        ),
+        ConfigValue(
+            "tool_memory_max_chars",
+            500,
+            description="Maximum characters per remembered tool note",
+            validator=Integer(default=500, min=80, max=4000),
+        ),
+        ConfigValue(
             "response_header",
             "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
             description="Final response header template. Supports placeholders from placeholders field",
@@ -446,6 +464,9 @@ class OpenAgent(ModuleBase):
             "media_max_bytes": 8_000_000,
             "context_enabled": True,
             "context_turns": 10,
+            "tool_memory_enabled": False,
+            "tool_memory_items": 20,
+            "tool_memory_max_chars": 500,
             "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
             "request_label": "<b>📝 Запрос:</b>",
             "response_label": "<b>💬 Ответ:</b>",
@@ -473,6 +494,7 @@ class OpenAgent(ModuleBase):
         self._last_request_at = 0.0
         self._skills_dir = self._resolve_skills_dir()
         self._chat_history: dict[int, list[dict[str, str]]] = {}
+        self._tool_memory: dict[int, list[str]] = {}
         self._cancelled_generations: set[str] = set()
         self._regen_payloads: dict[str, dict[str, Any]] = {}
         self._last_token_usage = {
@@ -603,6 +625,37 @@ class OpenAgent(ModuleBase):
         if not chat_id or not self.config["context_enabled"]:
             return []
         return list(self._chat_history.get(int(chat_id), []))
+
+    def _tool_memory_note(self, text: str) -> str:
+        text = re.sub(r"\s+", " ", text or "").strip()
+        if not text:
+            return ""
+        max_chars = int(self.config.get("tool_memory_max_chars", 500) or 500)
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "..."
+        return text
+
+    def _remember_tool_output(self, chat_id: int | None, tool_name: str, output: str) -> None:
+        if not chat_id or not bool(self.config.get("tool_memory_enabled", False)):
+            return
+        note = self._tool_memory_note(output)
+        if not note:
+            return
+        memory = self._tool_memory.setdefault(int(chat_id), [])
+        memory.append(f"{tool_name}: {note}")
+        max_items = int(self.config.get("tool_memory_items", 20) or 20)
+        if max_items <= 0:
+            memory.clear()
+        else:
+            del memory[:-max_items]
+
+    def _tool_memory_prompt(self, chat_id: int | None) -> str:
+        if not chat_id or not bool(self.config.get("tool_memory_enabled", False)):
+            return ""
+        notes = self._tool_memory.get(int(chat_id), [])
+        if not notes:
+            return ""
+        return "Recent tool memory:\n" + "\n".join(f"- {line}" for line in notes[-int(self.config.get("tool_memory_items", 20) or 20):])
 
     def _base_url(self, provider: str) -> str:
         if provider == "other":
@@ -2102,11 +2155,15 @@ class OpenAgent(ModuleBase):
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_override or self._system_prompt()}
         ]
+        tool_memory = self._tool_memory_prompt(chat_id)
+        if tool_memory:
+            messages.append({"role": "system", "content": tool_memory})
         messages.extend(self._history_for_chat(chat_id))
         messages.append({"role": "user", "content": user_content})
 
         agent_log: list[str] = []
-        max_steps = 15 # Architectural limit for tool chaining in 0.5.0
+        max_steps = 15  # Architectural limit for tool chaining in 0.5.0
+        answer = ""
 
         for _ in range(max_steps):
             if cancel_token and cancel_token in self._cancelled_generations:
@@ -2131,11 +2188,30 @@ class OpenAgent(ModuleBase):
                 tool_name, attrs_raw, body = match.group(4), match.group(5), ""
 
             output = await self._dispatch_tool(tool_name, attrs_raw, body, source_event, status_event, agent_log)
+            self._remember_tool_output(chat_id, tool_name, output)
             
             messages.append({"role": "assistant", "content": answer})
             messages.append({"role": "user", "content": f"Tool <{tool_name}> output:\n{output}"})
-
-        return (answer or "").strip(), agent_log
+        # Force one final pass without tool calls if tool-chain limit was reached.
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Stop using tools. Give the final user-facing answer now, in plain text only. "
+                    "Do not output XML tags or tool calls."
+                ),
+            }
+        )
+        if provider in ("openai", "other"):
+            answer = await self._ask_openai_compatible(provider, messages, api_key)
+        elif provider == "google":
+            answer = await self._ask_google(messages, api_key)
+        else:
+            raise RuntimeError(self.strings("bad_provider", providers=", ".join(self.PROVIDERS)))
+        clean = (answer or "").strip()
+        if clean:
+            return clean, agent_log
+        return "Инструменты выполнены, но модель не сформировала финальный текст.", agent_log
 
     def _agent_log_html(self, log: list[str]) -> str:
         if not log:
@@ -2790,6 +2866,7 @@ class OpenAgent(ModuleBase):
         if tool_name == "context.clear":
             if chat_id is not None:
                 self._chat_history.pop(int(chat_id), None)
+                self._tool_memory.pop(int(chat_id), None)
             return "Context cleared"
         if tool_name == "context.remember":
             if chat_id is None:
