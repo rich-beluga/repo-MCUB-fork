@@ -2374,6 +2374,8 @@ class OpenAgent(ModuleBase):
         patterns = [
             r"\s*Use the above message and context to generate a prompt and call the task tool with subagent:\s*\w+\s*",
             r"\s*call the task tool with subagent:\s*\w+\s*",
+            r"<(?:terminal|web|mcub|message|file|dialog|chat|moderation|profile|contacts|creation|skills|context|utility|code)\.[^>]+>",
+            r"</(?:terminal|web|mcub|message|file|dialog|chat|moderation|profile|contacts|creation|skills|context|utility|code)\.[^>]+>",
         ]
         for pattern in patterns:
             text = re.sub(pattern, " ", text, flags=re.I)
