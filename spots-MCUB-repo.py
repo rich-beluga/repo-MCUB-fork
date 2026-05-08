@@ -1,27 +1,24 @@
-# requires: spotipy, aiohttp, pillow, musicdl
-# author: @LoLpryvet && порт: @Hairpin00
-# version: 1.1.2
-# description: Слушай музыку в Spotify
+# mod kernel style -> class-style
+# scop: kernel min v1.3.0 
+from __future__ import annotations
 
 import asyncio
-import logging
-import tempfile
-import aiohttp
+import colorsys
 import os
 import re
-import io
+import tempfile
 from io import BytesIO
+from typing import Any
 
+import aiohttp
 import spotipy
 from PIL import Image, ImageDraw, ImageFont, ImageStat
-import colorsys
+from telethon import events, types
 
-from telethon import types
-from core.lib.loader.module_config import ModuleConfig, ConfigValue, String, Secret
+from core.lib.loader.module_base import ModuleBase, callback, command
+from core.lib.loader.module_config import ConfigValue, ModuleConfig, Secret, String
 
-logger = logging.getLogger(__name__)
-
-CUSTOM_EMOJI = {
+CUSTOM_EMOJI: dict[str, str] = {
     "link": '<tg-emoji emoji-id="5271604874419647061">🔗</tg-emoji>',
     "lock": '<tg-emoji emoji-id="5472308992514464048">🔐</tg-emoji>',
     "warning": '<tg-emoji emoji-id="5467890025217661107">‼️</tg-emoji>',
@@ -40,9 +37,15 @@ CUSTOM_EMOJI = {
 }
 
 
-def register(kernel):
-    client = kernel.client
-    prefix = kernel.custom_prefix
+class SpotsModule(ModuleBase):
+    name = "spots-MCUB-repo"
+    version = "1.2.2"
+    author = "@LoLpryvet && порт: @Hairpin00"
+    description: dict[str, str] = {
+        "ru": "Слушай музыку в Spotify",
+        "en": "Listen to Spotify music",
+    }
+    dependencies: list[str] = ["spotipy", "aiohttp", "pillow", "musicdl"]
 
     config = ModuleConfig(
         ConfigValue(
@@ -70,7 +73,10 @@ def register(kernel):
             validator=String(),
         ),
         ConfigValue(
-            "spots_genius_token", "", description="Genius API Token", validator=Secret()
+            "spots_genius_token",
+            "",
+            description="Genius API Token",
+            validator=Secret(),
         ),
         ConfigValue(
             "spots_font_url",
@@ -80,31 +86,40 @@ def register(kernel):
         ),
     )
 
-    async def _load_config():
-        cfg = await kernel.get_module_config(__name__, config.to_dict())
-        config.from_dict(cfg)
-        await kernel.save_module_config(__name__, config.to_dict())
-        kernel.store_module_config_schema(__name__, config)
+    async def on_load(self) -> None:
+        await super().on_load()
+        defaults = {
+            "spots_client_id": "",
+            "spots_client_secret": "",
+            "spots_auth_token": "",
+            "spots_refresh_token": "",
+            "spots_scopes": "user-read-playback-state user-library-read",
+            "spots_genius_token": "",
+            "spots_font_url": "https://raw.githubusercontent.com/kamekuro/assets/master/fonts/Onest-Bold.ttf",
+        }
+        config_dict = await self.kernel.get_module_config(self.name, defaults)
+        self.config.from_dict(config_dict)
+        self.kernel.store_module_config_schema(self.name, self.config)
+        clean = {k: v for k, v in self.config.to_dict().items() if v is not None}
+        if clean:
+            await self.kernel.save_module_config(self.name, clean)
+        self.musicdl: SpotsModule.MusicDL = self.MusicDL(self.client)
+        self._realtime_lyrics_data: dict[str, Any] = {"active": False}
+        self._playnow_data: dict[str, Any] = {"active": False}
 
-    asyncio.create_task(_load_config())
-
-    def get_config():
-        live = getattr(kernel, "_live_module_configs", {}).get(__name__)
-        return live if live else config
-
-    musicdl = None
 
     class MusicDL:
-        def __init__(self, client):
+        def __init__(self, client: Any) -> None:
             self.client = client
             self.timeout = 40
             self.retries = 3
 
-        async def dl(self, full_name: str, only_document: bool = False):
+        async def dl(
+            self, full_name: str, only_document: bool = False
+        ) -> Any | None:
             import io
             import requests
             from telethon.errors.rpcerrorlist import BotResponseTimeoutError
-            from telethon.events import MessageEdited
 
             bots = ["@vkm4bot", "@spotifysavebot", "@lybot"]
             document = None
@@ -116,7 +131,6 @@ def register(kernel):
                         document = results[0].document
                         break
                 except Exception as e:
-                    logger.debug(f"Failed to get document from {bot}: {e}")
                     continue
 
             if not document:
@@ -125,9 +139,9 @@ def register(kernel):
                     if q and q[0].document:
                         document = q[0].document
                 except BotResponseTimeoutError:
-                    logger.debug("BotResponseTimeoutError from @losslessrobot")
-                except Exception as e:
-                    logger.debug(f"Failed to get document from @losslessrobot: {e}")
+                    pass
+                except Exception:
+                    pass
 
             if not document:
                 return None
@@ -151,41 +165,41 @@ def register(kernel):
 
             return f"https://siasky.net/{skynet.json()['skylink']}"
 
-    musicdl = MusicDL(client)
-
-    async def _load_font(size):
-        """Загружает шрифт по URL из конфигурации"""
+    async def _load_font(self, size: int) -> ImageFont.FreeTypeFont:
+        """Загружает шрифт по URL из конфигурации."""
         try:
-            font_url = get_config().get(
-                "spots_font_url",
-                "https://raw.githubusercontent.com/kamekuro/assets/master/fonts/Onest-Bold.ttf",
-            )
+            font_url: str = self.config["spots_font_url"]
             async with aiohttp.ClientSession() as session:
                 async with session.get(font_url) as response:
                     if response.status == 200:
                         font_data = await response.read()
                         return ImageFont.truetype(BytesIO(font_data), size)
         except Exception as e:
-            logger.warning(f"Failed to load custom font, using fallback: {e}")
+            self.log.warning(f"Failed to load custom font, using fallback: {e}")
 
-        # Fallback на системные шрифты
-        try:
-            return ImageFont.truetype("/System/Library/Fonts/Helvetica-Bold.ttc", size)
-        except:
+        for path in (
+            "/System/Library/Fonts/Helvetica-Bold.ttc",
+            "arial.ttf",
+            "DejaVuSans-Bold.ttf",
+        ):
             try:
-                return ImageFont.truetype("arial.ttf", size)
-            except:
-                try:
-                    return ImageFont.truetype("DejaVuSans-Bold.ttf", size)
-                except:
-                    return ImageFont.load_default()
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
 
-    async def _get_lyrics_from_lrclib(artist, title, duration_ms=None):
+        return ImageFont.load_default()
+
+    async def _get_lyrics_from_lrclib(
+        self, artist: str, title: str, duration_ms: int | None = None
+    ) -> dict[str, Any] | None:
         try:
             clean_title = re.sub(r"\([^)]*\)", "", title).strip()
             clean_artist = re.sub(r"\([^)]*\)", "", artist).strip()
 
-            params = {"artist_name": clean_artist, "track_name": clean_title}
+            params: dict[str, Any] = {
+                "artist_name": clean_artist,
+                "track_name": clean_title,
+            }
             if duration_ms:
                 params["duration"] = duration_ms // 1000
 
@@ -209,11 +223,13 @@ def register(kernel):
                                 return {"type": "plain", "lyrics": plain_lyrics}
             return None
         except Exception as e:
-            logger.error(f"Error getting lyrics from LRCLib: {e}")
+            self.log.error(f"Error getting lyrics from LRCLib: {e}")
             return None
 
-    async def _get_lyrics_from_genius(artist, title):
-        if not get_config().get("spots_genius_token"):
+    async def _get_lyrics_from_genius(
+        self, artist: str, title: str
+    ) -> str | None:
+        if not self.config["spots_genius_token"]:
             return None
 
         try:
@@ -222,7 +238,7 @@ def register(kernel):
 
             search_url = "https://api.genius.com/search"
             headers = {
-                "Authorization": f"Bearer {get_config().get('spots_genius_token')}"
+                "Authorization": f"Bearer {self.config['spots_genius_token']}"
             }
             params = {"q": f"{clean_artist} {clean_title}"}
 
@@ -239,7 +255,7 @@ def register(kernel):
                     if not hits:
                         return None
 
-                    song_url = None
+                    song_url: str | None = None
                     for hit in hits:
                         song = hit.get("result", {})
                         song_title = song.get("title", "").lower()
@@ -263,12 +279,12 @@ def register(kernel):
                     if not song_url:
                         return None
 
-                    return await _scrape_genius_lyrics(song_url)
+                    return await self._scrape_genius_lyrics(song_url)
         except Exception as e:
-            logger.error(f"Error getting lyrics from Genius: {e}")
+            self.log.error(f"Error getting lyrics from Genius: {e}")
             return None
 
-    async def _scrape_genius_lyrics(url):
+    async def _scrape_genius_lyrics(self, url: str) -> str | None:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
@@ -279,9 +295,7 @@ def register(kernel):
                     lyrics_pattern = (
                         r'<div[^>]*data-lyrics-container="true"[^>]*>(.*?)</div>'
                     )
-                    matches = re.findall(
-                        lyrics_pattern, html, re.DOTALL | re.IGNORECASE
-                    )
+                    matches = re.findall(lyrics_pattern, html, re.DOTALL | re.IGNORECASE)
 
                     if not matches:
                         lyrics_pattern = (
@@ -305,10 +319,12 @@ def register(kernel):
 
                     return None
         except Exception as e:
-            logger.error(f"Error scraping Genius lyrics: {e}")
+            self.log.error(f"Error scraping Genius lyrics: {e}")
             return None
 
-    async def _get_lyrics_from_api(artist, title):
+    async def _get_lyrics_from_api(
+        self, artist: str, title: str
+    ) -> dict[str, Any] | None:
         try:
             url = f"https://api.lyrics.ovh/v1/{artist}/{title}"
             async with aiohttp.ClientSession() as session:
@@ -320,15 +336,17 @@ def register(kernel):
                             return {"type": "plain", "lyrics": lyrics}
                     return None
         except Exception as e:
-            logger.error(f"Error getting lyrics from lyrics.ovh: {e}")
+            self.log.error(f"Error getting lyrics from lyrics.ovh: {e}")
             return None
 
-    def _format_synced_lyrics(synced_lyrics, current_progress_ms=None):
+    def _format_synced_lyrics(
+        self, synced_lyrics: str, current_progress_ms: int | None = None
+    ) -> str | None:
         if not synced_lyrics:
             return None
 
         lines = synced_lyrics.strip().split("\n")
-        formatted_lines = []
+        formatted_lines: list[str] = []
         current_line_found = False
 
         for line in lines:
@@ -342,7 +360,7 @@ def register(kernel):
 
                 if current_progress_ms and not current_line_found:
                     if line_time_ms <= current_progress_ms:
-                        next_line_time = None
+                        next_line_time: int | None = None
                         line_index = lines.index(line)
                         if line_index + 1 < len(lines):
                             next_match = re.match(
@@ -374,12 +392,17 @@ def register(kernel):
 
         return "\n".join(formatted_lines)
 
-    async def _get_synced_lyrics_data(artist, title, duration_ms=None):
+    async def _get_synced_lyrics_data(
+        self, artist: str, title: str, duration_ms: int | None = None
+    ) -> list[dict[str, Any]] | None:
         try:
             clean_title = re.sub(r"\([^)]*\)", "", title).strip()
             clean_artist = re.sub(r"\([^)]*\)", "", artist).strip()
 
-            params = {"artist_name": clean_artist, "track_name": clean_title}
+            params: dict[str, Any] = {
+                "artist_name": clean_artist,
+                "track_name": clean_title,
+            }
             if duration_ms:
                 params["duration"] = duration_ms // 1000
 
@@ -392,18 +415,20 @@ def register(kernel):
                             track_data = data[0]
                             synced_lyrics = track_data.get("syncedLyrics")
                             if synced_lyrics:
-                                return _parse_synced_lyrics(synced_lyrics)
+                                return self._parse_synced_lyrics(synced_lyrics)
             return None
         except Exception as e:
-            logger.error(f"Error getting synced lyrics from LRCLib: {e}")
+            self.log.error(f"Error getting synced lyrics from LRCLib: {e}")
             return None
 
-    def _parse_synced_lyrics(synced_lyrics):
+    def _parse_synced_lyrics(
+        self, synced_lyrics: str
+    ) -> list[dict[str, Any]] | None:
         if not synced_lyrics:
             return None
 
         lines = synced_lyrics.strip().split("\n")
-        parsed_lines = []
+        parsed_lines: list[dict[str, Any]] = []
 
         for line in lines:
             time_match = re.match(r"\[(\d{2}):(\d{2})\.(\d{2})\](.*)", line)
@@ -425,11 +450,13 @@ def register(kernel):
 
         return parsed_lines
 
-    def _get_current_lyric_line(lyrics_data, current_progress_ms):
+    def _get_current_lyric_line(
+        self, lyrics_data: list[dict[str, Any]], current_progress_ms: int
+    ) -> tuple[dict[str, Any] | None, int]:
         if not lyrics_data:
             return None, -1
 
-        current_line = None
+        current_line: dict[str, Any] | None = None
         current_index = -1
 
         for i, line in enumerate(lyrics_data):
@@ -447,11 +474,16 @@ def register(kernel):
 
         return current_line, current_index
 
-    def _format_realtime_lyrics(lyrics_data, current_index, context_lines=2):
+    def _format_realtime_lyrics(
+        self,
+        lyrics_data: list[dict[str, Any]],
+        current_index: int,
+        context_lines: int = 2,
+    ) -> str:
         if not lyrics_data or current_index == -1:
             return "🎵 Ожидание синхронизации..."
 
-        formatted_lines = []
+        formatted_lines: list[str] = []
         start_index = max(0, current_index - context_lines)
         end_index = min(len(lyrics_data), current_index + context_lines + 1)
 
@@ -466,15 +498,57 @@ def register(kernel):
 
         return "\n".join(formatted_lines)
 
-    async def _realtime_lyrics_loop():
-        if (
-            not hasattr(kernel, "_realtime_lyrics_data")
-            or not kernel._realtime_lyrics_data["active"]
-        ):
+    def _cancel_buttons(self, cancel_callback: Any | None) -> list[list[Any]] | None:
+        if not cancel_callback:
+            return None
+        return [[self.Button.inline("⏹️ Отмена", cancel_callback)]]
+
+    async def _edit_live_message(self, data: dict[str, Any], text: str) -> None:
+        buttons = self._cancel_buttons(data.get("cancel_callback"))
+        callback = data.get("callback")
+        if callback is not None and hasattr(callback, "edit"):
+            try:
+                if buttons:
+                    await callback.edit(text, parse_mode="html", buttons=buttons)
+                else:
+                    await callback.edit(text, parse_mode="html")
+                return
+            except TypeError:
+                try:
+                    await callback.edit(text, parse_mode="html")
+                    return
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        message = data.get("message")
+        if message is not None and hasattr(message, "edit"):
+            try:
+                if buttons:
+                    await message.edit(text, parse_mode="html", buttons=buttons)
+                else:
+                    await message.edit(text, parse_mode="html")
+                return
+            except TypeError:
+                try:
+                    await message.edit(text, parse_mode="html")
+                    return
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        await self.client.edit_message(
+            data["chat_id"], data["message_id"], text, parse_mode="html"
+        )
+
+    async def _realtime_lyrics_loop(self) -> None:
+        if not self._realtime_lyrics_data.get("active"):
             return
 
         try:
-            data = kernel._realtime_lyrics_data
+            data = self._realtime_lyrics_data
             update_count = 0
             max_updates = 600
             pause_count = 0
@@ -483,7 +557,7 @@ def register(kernel):
 
             while data["active"] and update_count < max_updates:
                 try:
-                    sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+                    sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
                     current_playback = sp.current_playback()
 
                     if not current_playback or not current_playback.get("item"):
@@ -498,8 +572,8 @@ def register(kernel):
                     if current_track_id != data["track_id"]:
                         break
 
-                    progress_ms = current_playback.get("progress_ms", 0)
-                    is_playing = current_playback.get("is_playing", False)
+                    progress_ms: int = current_playback.get("progress_ms", 0)
+                    is_playing: bool = current_playback.get("is_playing", False)
 
                     if not is_playing:
                         pause_count += 1
@@ -509,13 +583,8 @@ def register(kernel):
                                 + "⏸️ <i>Сеанс завершен из-за длительной паузы</i>"
                             )
                             try:
-                                await client.edit_message(
-                                    data["chat_id"],
-                                    data["message_id"],
-                                    new_text,
-                                    parse_mode="html",
-                                )
-                            except:
+                                await self._edit_live_message(data, new_text)
+                            except Exception:
                                 pass
                             break
 
@@ -528,15 +597,10 @@ def register(kernel):
                                 + "⏸️ <i>Воспроизведение приостановлено</i>"
                             )
                             try:
-                                await client.edit_message(
-                                    data["chat_id"],
-                                    data["message_id"],
-                                    new_text,
-                                    parse_mode="html",
-                                )
+                                await self._edit_live_message(data, new_text)
                                 last_pause_message_count = pause_count
                             except Exception as edit_error:
-                                logger.debug(
+                                self.log.debug(
                                     f"Failed to edit pause message: {edit_error}"
                                 )
 
@@ -548,77 +612,71 @@ def register(kernel):
                             pause_count = 0
                             last_pause_message_count = -1
 
-                        current_line, current_index = _get_current_lyric_line(
+                        current_line, current_index = self._get_current_lyric_line(
                             data["lyrics_data"], progress_ms
                         )
                         if current_index != data["last_line_index"]:
-                            formatted_lyrics = _format_realtime_lyrics(
+                            formatted_lyrics = self._format_realtime_lyrics(
                                 data["lyrics_data"], current_index
                             )
                             new_text = data["header"] + formatted_lyrics
                             data["last_line_index"] = current_index
 
                             try:
-                                await client.edit_message(
-                                    data["chat_id"],
-                                    data["message_id"],
-                                    new_text,
-                                    parse_mode="html",
-                                )
+                                await self._edit_live_message(data, new_text)
                             except Exception as edit_error:
-                                logger.debug(f"Failed to edit message: {edit_error}")
+                                self.log.debug(f"Failed to edit message: {edit_error}")
                                 break
 
                     await asyncio.sleep(1)
                     update_count += 1
                 except spotipy.exceptions.SpotifyException as e:
-                    logger.debug(f"Spotify API error: {e}")
+                    self.log.debug(f"Spotify API error: {e}")
                     await asyncio.sleep(3)
                     update_count += 1
                     continue
                 except Exception as e:
-                    logger.error(f"Error in realtime lyrics loop: {e}")
+                    self.log.error(f"Error in realtime lyrics loop: {e}")
                     await asyncio.sleep(2)
                     update_count += 1
 
             data["active"] = False
             try:
                 final_text = data["header"] + "✅ <i>Сеанс синхронизации завершен</i>"
-                await client.edit_message(
-                    data["chat_id"], data["message_id"], final_text, parse_mode="html"
-                )
-            except:
+                await self._edit_live_message(data, final_text)
+            except Exception:
                 pass
         except Exception as e:
-            logger.error(f"Critical error in realtime lyrics loop: {e}")
-            if hasattr(kernel, "_realtime_lyrics_data"):
-                kernel._realtime_lyrics_data["active"] = False
+            self.log.error(f"Critical error in realtime lyrics loop: {e}")
+            self._realtime_lyrics_data["active"] = False
 
-    async def _create_song_card(track_info):
+    async def _create_song_card(self, track_info: dict[str, Any]) -> str | None:
         try:
             W, H = 600, 250
-            title_font = await _load_font(34)
-            artist_font = await _load_font(22)
-            time_font = await _load_font(18)
+            title_font = await self._load_font(34)
+            artist_font = await self._load_font(22)
+            time_font = await self._load_font(18)
 
-            album_art_url = track_info["album_art"]
+            album_art_url: str = track_info["album_art"]
             async with aiohttp.ClientSession() as session:
                 async with session.get(album_art_url) as response:
                     art_data = await response.read()
                     album_art_original = Image.open(BytesIO(art_data))
 
-            def get_dominant_color(image):
+            def get_dominant_color(image: Image.Image) -> tuple[int, int, int]:
                 small_image = image.resize((50, 50))
                 stat = ImageStat.Stat(small_image)
                 r, g, b = stat.mean
                 return int(r), int(g), int(b)
 
-            def create_darker_variant(r, g, b, factor=0.4):
+            def create_darker_variant(
+                r: int, g: int, b: int, factor: float = 0.4
+            ) -> tuple[int, int, int]:
                 h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
                 v = max(0.15, v * factor)
                 s = min(1.0, s * 1.1)
-                r, g, b = colorsys.hsv_to_rgb(h, s, v)
-                return int(r * 255), int(g * 255), int(b * 255)
+                r2, g2, b2 = colorsys.hsv_to_rgb(h, s, v)
+                return int(r2 * 255), int(g2 * 255), int(b2 * 255)
 
             dominant_r, dominant_g, dominant_b = get_dominant_color(album_art_original)
             bg_r, bg_g, bg_b = create_darker_variant(dominant_r, dominant_g, dominant_b)
@@ -639,9 +697,7 @@ def register(kernel):
             )
             mask = Image.new("L", (album_size, album_size), 0)
             mask_draw = ImageDraw.Draw(mask)
-            mask_draw.rounded_rectangle(
-                [0, 0, album_size, album_size], radius=15, fill=255
-            )  # Меньший радиус
+            mask_draw.rounded_rectangle([0, 0, album_size, album_size], radius=15, fill=255)
             album_art.putalpha(mask)
 
             art_x = 20
@@ -649,9 +705,8 @@ def register(kernel):
             card.paste(album_art, (art_x, art_y), album_art)
 
             text_x = art_x + album_size + 20
-            text_width = W - text_x - 20
 
-            track_name = track_info["track_name"]
+            track_name: str = track_info["track_name"]
             if len(track_name) > 25:
                 track_name = track_name[:25] + "..."
 
@@ -661,15 +716,13 @@ def register(kernel):
             title_y = art_y + 5
 
             for i, line in enumerate(title_lines[:2]):
-                draw.text(
-                    (text_x, title_y + i * 40), line, font=title_font, fill="white"
-                )
+                draw.text((text_x, title_y + i * 40), line, font=title_font, fill="white")
 
-            artist_name = track_info["artist_name"]
+            artist_name: str = track_info["artist_name"]
             if len(artist_name) > 30:
                 artist_name = artist_name[:30] + "..."
 
-            artist_y = title_y + (len(title_lines) * 40 if len(title_lines) > 0 else 40)
+            artist_y = title_y + (len(title_lines) * 40 if title_lines else 40)
             draw.text((text_x, artist_y), artist_name, font=artist_font, fill="#A0A0A0")
 
             progress_y = H - 45
@@ -678,48 +731,34 @@ def register(kernel):
             progress_x = text_x
 
             draw.rounded_rectangle(
-                [
-                    progress_x,
-                    progress_y,
-                    progress_x + progress_width,
-                    progress_y + progress_height,
-                ],
+                [progress_x, progress_y, progress_x + progress_width, progress_y + progress_height],
                 radius=2,
                 fill="#555555",
             )
 
-            current_time_str = track_info.get("current_time", "00:17")
-            duration_str = track_info["duration"]
+            current_time_str: str = track_info.get("current_time", "00:17")
+            duration_str: str = track_info["duration"]
 
             try:
                 current_parts = current_time_str.split(":")
                 current_seconds = int(current_parts[0]) * 60 + int(current_parts[1])
                 duration_parts = duration_str.split(":")
                 duration_seconds = int(duration_parts[0]) * 60 + int(duration_parts[1])
-                if duration_seconds > 0:
-                    progress_ratio = current_seconds / duration_seconds
-                else:
-                    progress_ratio = 0.1
-            except:
+                progress_ratio = (
+                    current_seconds / duration_seconds if duration_seconds > 0 else 0.1
+                )
+            except Exception:
                 progress_ratio = 0.1
 
             progress_fill = int(progress_width * progress_ratio)
             draw.rounded_rectangle(
-                [
-                    progress_x,
-                    progress_y,
-                    progress_x + progress_fill,
-                    progress_y + progress_height,
-                ],
+                [progress_x, progress_y, progress_x + progress_fill, progress_y + progress_height],
                 radius=2,
                 fill="#1DB954",
             )
 
             draw.text(
-                (progress_x, progress_y + 10),
-                current_time_str,
-                font=time_font,
-                fill="#A0A0A0",
+                (progress_x, progress_y + 10), current_time_str, font=time_font, fill="#A0A0A0"
             )
 
             time_bbox = draw.textbbox((0, 0), duration_str, font=time_font)
@@ -737,33 +776,35 @@ def register(kernel):
             card.save(card_path, "PNG")
             return card_path
         except Exception as e:
-            logger.error(f"Error creating song card: {e}")
+            self.log.error(f"Error creating song card: {e}")
             return None
 
-    async def _create_song_card_no_time(track_info):
+    async def _create_song_card_no_time(self, track_info: dict[str, Any]) -> str | None:
         try:
             W, H = 600, 200
-            title_font = await _load_font(34)
-            artist_font = await _load_font(22)
+            title_font = await self._load_font(34)
+            artist_font = await self._load_font(22)
 
-            album_art_url = track_info["album_art"]
+            album_art_url: str = track_info["album_art"]
             async with aiohttp.ClientSession() as session:
                 async with session.get(album_art_url) as response:
                     art_data = await response.read()
                     album_art_original = Image.open(BytesIO(art_data))
 
-            def get_dominant_color(image):
+            def get_dominant_color(image: Image.Image) -> tuple[int, int, int]:
                 small_image = image.resize((50, 50))
                 stat = ImageStat.Stat(small_image)
                 r, g, b = stat.mean
                 return int(r), int(g), int(b)
 
-            def create_darker_variant(r, g, b, factor=0.4):
+            def create_darker_variant(
+                r: int, g: int, b: int, factor: float = 0.4
+            ) -> tuple[int, int, int]:
                 h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
                 v = max(0.15, v * factor)
                 s = min(1.0, s * 1.1)
-                r, g, b = colorsys.hsv_to_rgb(h, s, v)
-                return int(r * 255), int(g * 255), int(b * 255)
+                r2, g2, b2 = colorsys.hsv_to_rgb(h, s, v)
+                return int(r2 * 255), int(g2 * 255), int(b2 * 255)
 
             dominant_r, dominant_g, dominant_b = get_dominant_color(album_art_original)
             bg_r, bg_g, bg_b = create_darker_variant(dominant_r, dominant_g, dominant_b)
@@ -784,9 +825,7 @@ def register(kernel):
             )
             mask = Image.new("L", (album_size, album_size), 0)
             mask_draw = ImageDraw.Draw(mask)
-            mask_draw.rounded_rectangle(
-                [0, 0, album_size, album_size], radius=15, fill=255
-            )
+            mask_draw.rounded_rectangle([0, 0, album_size, album_size], radius=15, fill=255)
             album_art.putalpha(mask)
 
             art_x = 15
@@ -794,23 +833,22 @@ def register(kernel):
             card.paste(album_art, (art_x, art_y), album_art)
 
             text_x = art_x + album_size + 15
-            text_width = W - text_x - 15
 
-            track_name = track_info["track_name"]
+            track_name: str = track_info["track_name"]
             if len(track_name) > 22:
                 track_name = track_name[:22] + "..."
 
             title_y = H // 2 - 25
             draw.text((text_x, title_y), track_name, font=title_font, fill="white")
 
-            artist_name = track_info["artist_name"]
+            artist_name: str = track_info["artist_name"]
             if len(artist_name) > 25:
                 artist_name = artist_name[:25] + "..."
 
             artist_y = H // 2 + 5
             draw.text((text_x, artist_y), artist_name, font=artist_font, fill="#A0A0A0")
 
-            live_font = await _load_font(16)
+            live_font = await self._load_font(16)
             live_text = "LIVE"
             live_bbox = draw.textbbox((0, 0), live_text, font=live_font)
             live_width = live_bbox[2] - live_bbox[0]
@@ -827,27 +865,29 @@ def register(kernel):
             card.save(card_path, "PNG")
             return card_path
         except Exception as e:
-            logger.error(f"Error creating song card without time: {e}")
+            self.log.error(f"Error creating song card without time: {e}")
             return None
 
-    async def _update_playnow_for_new_track(data, current_playback):
+    async def _update_playnow_for_new_track(
+        self, data: dict[str, Any], current_playback: dict[str, Any]
+    ) -> None:
         try:
             track = current_playback["item"]
-            track_name = track.get("name", "Unknown Track")
-            artist_name = track["artists"][0].get("name", "Unknown Artist")
-            track_url = track["external_urls"]["spotify"]
-            duration_ms = track.get("duration_ms", 0)
-            track_id = track.get("id", "")
+            track_name: str = track.get("name", "Unknown Track")
+            artist_name: str = track["artists"][0].get("name", "Unknown Artist")
+            track_url: str = track["external_urls"]["spotify"]
+            duration_ms: int = track.get("duration_ms", 0)
+            track_id: str = track.get("id", "")
 
-            track_info = {
+            track_info: dict[str, Any] = {
                 "track_name": track_name,
                 "artist_name": artist_name,
                 "album_art": track["album"]["images"][0]["url"],
                 "track_id": track_id,
             }
 
-            card_path = await _create_song_card_no_time(track_info)
-            lyrics_data = await _get_synced_lyrics_data(
+            card_path = await self._create_song_card_no_time(track_info)
+            lyrics_data = await self._get_synced_lyrics_data(
                 artist_name, track_name, duration_ms
             )
 
@@ -856,16 +896,19 @@ def register(kernel):
                 data["lyrics_data"] = lyrics_data
                 data["last_line_index"] = -1
             else:
-                initial_lyrics = f"❌ <i>Синхронизированный текст для трека не найден</i>\n\n<a href='{track_url}'>{artist_name} — {track_name}</a>"
+                initial_lyrics = (
+                    f"❌ <i>Синхронизированный текст для трека не найден</i>\n\n"
+                    f"<a href='{track_url}'>{artist_name} — {track_name}</a>"
+                )
                 data["lyrics_data"] = None
 
             if card_path:
                 try:
-                    await client.delete_messages(data["chat_id"], data["message_id"])
-                except:
+                    await self.client.delete_messages(data["chat_id"], data["message_id"])
+                except Exception:
                     pass
 
-                new_message = await client.send_file(
+                new_message = await self.client.send_file(
                     data["chat_id"],
                     card_path,
                     caption=initial_lyrics,
@@ -874,27 +917,27 @@ def register(kernel):
                 data["message_id"] = new_message.id
                 try:
                     os.remove(card_path)
-                except:
+                except Exception:
                     pass
         except Exception as e:
-            logger.error(f"Error updating playnow for new track: {e}")
+            self.log.error(f"Error updating playnow for new track: {e}")
 
-    async def _playnow_loop():
-        if not hasattr(kernel, "_playnow_data") or not kernel._playnow_data["active"]:
+    async def _playnow_loop(self) -> None:
+        if not self._playnow_data.get("active"):
             return
 
         try:
-            data = kernel._playnow_data
+            data = self._playnow_data
             update_count = 0
             max_updates = 1200
             pause_count = 0
             max_pause_time = 120
             last_pause_message_count = -1
-            current_track_id = data.get("current_track_id")
+            current_track_id: str = data.get("current_track_id", "")
 
             while data["active"] and update_count < max_updates:
                 try:
-                    sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+                    sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
                     current_playback = sp.current_playback()
 
                     if not current_playback or not current_playback.get("item"):
@@ -905,13 +948,13 @@ def register(kernel):
                         update_count += 1
                         continue
 
-                    new_track_id = current_playback["item"].get("id", "")
-                    progress_ms = current_playback.get("progress_ms", 0)
-                    is_playing = current_playback.get("is_playing", False)
+                    new_track_id: str = current_playback["item"].get("id", "")
+                    progress_ms: int = current_playback.get("progress_ms", 0)
+                    is_playing: bool = current_playback.get("is_playing", False)
                     track_changed = new_track_id != current_track_id
 
                     if track_changed:
-                        await _update_playnow_for_new_track(data, current_playback)
+                        await self._update_playnow_for_new_track(data, current_playback)
                         current_track_id = new_track_id
                         data["current_track_id"] = new_track_id
                         pause_count = 0
@@ -923,13 +966,8 @@ def register(kernel):
                         if pause_count >= max_pause_time:
                             new_text = "⏸️ <i>Сеанс завершен из-за длительной паузы</i>"
                             try:
-                                await client.edit_message(
-                                    data["chat_id"],
-                                    data["message_id"],
-                                    new_text,
-                                    parse_mode="html",
-                                )
-                            except:
+                                await self._edit_live_message(data, new_text)
+                            except Exception:
                                 pass
                             break
 
@@ -939,15 +977,10 @@ def register(kernel):
                         ):
                             formatted_lyrics = "⏸️ <i>Воспроизведение приостановлено</i>"
                             try:
-                                await client.edit_message(
-                                    data["chat_id"],
-                                    data["message_id"],
-                                    formatted_lyrics,
-                                    parse_mode="html",
-                                )
+                                await self._edit_live_message(data, formatted_lyrics)
                                 last_pause_message_count = pause_count
                             except Exception as edit_error:
-                                logger.debug(
+                                self.log.debug(
                                     f"Failed to edit pause message: {edit_error}"
                                 )
 
@@ -960,65 +993,55 @@ def register(kernel):
                             last_pause_message_count = -1
 
                         if data.get("lyrics_data"):
-                            current_line, current_index = _get_current_lyric_line(
+                            current_line, current_index = self._get_current_lyric_line(
                                 data["lyrics_data"], progress_ms
                             )
                             if current_index != data.get("last_line_index", -1):
-                                formatted_lyrics = _format_realtime_lyrics(
+                                formatted_lyrics = self._format_realtime_lyrics(
                                     data["lyrics_data"], current_index
                                 )
                                 data["last_line_index"] = current_index
                                 try:
-                                    await client.edit_message(
-                                        data["chat_id"],
-                                        data["message_id"],
-                                        formatted_lyrics,
-                                        parse_mode="html",
-                                    )
+                                    await self._edit_live_message(data, formatted_lyrics)
                                 except Exception as edit_error:
-                                    logger.debug(
-                                        f"Failed to edit message: {edit_error}"
-                                    )
+                                    self.log.debug(f"Failed to edit message: {edit_error}")
                                     break
 
                     await asyncio.sleep(1)
                     update_count += 1
                 except spotipy.exceptions.SpotifyException as e:
-                    logger.debug(f"Spotify API error: {e}")
+                    self.log.debug(f"Spotify API error: {e}")
                     await asyncio.sleep(3)
                     update_count += 1
                     continue
                 except Exception as e:
-                    logger.error(f"Error in playnow loop: {e}")
+                    self.log.error(f"Error in playnow loop: {e}")
                     await asyncio.sleep(2)
                     update_count += 1
 
             data["active"] = False
             try:
                 final_text = "✅ <i>Сеанс live-отображения завершен</i>"
-                await client.edit_message(
-                    data["chat_id"], data["message_id"], final_text, parse_mode="html"
-                )
-            except:
+                await self._edit_live_message(data, final_text)
+            except Exception:
                 pass
         except Exception as e:
-            logger.error(f"Critical error in playnow loop: {e}")
-            if hasattr(kernel, "_playnow_data"):
-                kernel._playnow_data["active"] = False
+            self.log.error(f"Critical error in playnow loop: {e}")
+            self._playnow_data["active"] = False
 
-    @kernel.register.command("lyrics")
-    # Получить текст текущего трека
-    async def lyrics_cmd(event):
+    # ── Commands ──────────────────────────────────────────────────────────────
 
-        if not get_config().get("spots_auth_token"):
+    @command("lyrics", doc_ru="Получить текст текущего трека", doc_en="Get current track lyrics")
+    async def cmd_lyrics(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_auth_token"]:
             await event.edit(
-                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
 
         try:
-            sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1034,27 +1057,27 @@ def register(kernel):
             )
 
             track = current_playback["item"]
-            track_name = track.get("name", "Unknown Track")
-            artist_name = track["artists"][0].get("name", "Unknown Artist")
-            track_url = track["external_urls"]["spotify"]
-            duration_ms = track.get("duration_ms", 0)
-            progress_ms = current_playback.get("progress_ms", 0)
+            track_name: str = track.get("name", "Unknown Track")
+            artist_name: str = track["artists"][0].get("name", "Unknown Artist")
+            track_url: str = track["external_urls"]["spotify"]
+            duration_ms: int = track.get("duration_ms", 0)
+            progress_ms: int = current_playback.get("progress_ms", 0)
 
-            lyrics_data = await _get_lyrics_from_lrclib(
+            lyrics_data = await self._get_lyrics_from_lrclib(
                 artist_name, track_name, duration_ms
             )
 
-            if not lyrics_data and get_config().get("spots_genius_token"):
-                genius_lyrics = await _get_lyrics_from_genius(artist_name, track_name)
+            if not lyrics_data and self.config["spots_genius_token"]:
+                genius_lyrics = await self._get_lyrics_from_genius(artist_name, track_name)
                 if genius_lyrics:
                     lyrics_data = {"type": "plain", "lyrics": genius_lyrics}
 
             if not lyrics_data:
-                lyrics_data = await _get_lyrics_from_api(artist_name, track_name)
+                lyrics_data = await self._get_lyrics_from_api(artist_name, track_name)
 
             if lyrics_data:
                 if lyrics_data["type"] == "synced":
-                    formatted_lyrics = _format_synced_lyrics(
+                    formatted_lyrics = self._format_synced_lyrics(
                         lyrics_data["lyrics"], progress_ms
                     )
                     await event.edit(
@@ -1079,7 +1102,7 @@ def register(kernel):
         except spotipy.exceptions.SpotifyException as e:
             if "The access token expired" in str(e):
                 await event.edit(
-                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                     parse_mode="html",
                 )
             elif "NO_ACTIVE_DEVICE" in str(e):
@@ -1098,46 +1121,40 @@ def register(kernel):
                 parse_mode="html",
             )
 
-    @kernel.register.command("spauth")
-    # Войти в свой аккаунт
-    async def spauth_cmd(event):
-        if not get_config().get("spots_client_id") or not get_config().get(
-            "spots_client_secret"
-        ):
+    @command("spauth", doc_ru="Войти в аккаунт Spotify", doc_en="Log in to Spotify account")
+    async def cmd_spauth(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_client_id"] or not self.config["spots_client_secret"]:
             await event.edit(
                 f'{CUSTOM_EMOJI["lock"]} <b>Создай приложение по <a href="https://developer.spotify.com/dashboard">этой ссылке</a></b>\n\n'
                 f"{CUSTOM_EMOJI['warning']} <b>Важно:</b> redirect_url приложения должен быть <code>https://sp.fajox.one</code>\n\n"
                 f"<b>{CUSTOM_EMOJI['key']} Заполни <code>client_id</code> и <code>client_secret</code> в конфигурации</b>\n\n"
-                f"<b>{CUSTOM_EMOJI['computer']} И снова напиши <code>{prefix}spauth</code></b>",
+                f"<b>{CUSTOM_EMOJI['computer']} И снова напиши <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
 
         sp_oauth = spotipy.oauth2.SpotifyOAuth(
-            client_id=get_config().get("spots_client_id"),
-            client_secret=get_config().get("spots_client_secret"),
+            client_id=self.config["spots_client_id"],
+            client_secret=self.config["spots_client_secret"],
             redirect_uri="https://sp.fajox.one",
-            scope=get_config().get("spots_scopes"),
+            scope=self.config["spots_scopes"],
         )
 
         auth_url = sp_oauth.get_authorize_url()
         await event.edit(
             f"<b>{CUSTOM_EMOJI['link']} Ссылка для авторизации создана!\n\n🔐 Перейди по <a href='{auth_url}'>этой ссылке</a>.\n\n"
-            f"✏️ Потом введи: <code>{prefix}spcode свой_auth_token</code></b>",
+            f"✏️ Потом введи: <code>{self.get_prefix()}spcode свой_auth_token</code></b>",
             parse_mode="html",
         )
 
-    @kernel.register.command("spcode")
-    # Ввести код авторизации
-    async def spcode_cmd(event):
-        if not get_config().get("spots_client_id") or not get_config().get(
-            "spots_client_secret"
-        ):
+    @command("spcode", doc_ru="<код> Ввести код авторизации", doc_en="<code> Enter auth code")
+    async def cmd_spcode(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_client_id"] or not self.config["spots_client_secret"]:
             await event.edit(
                 f'{CUSTOM_EMOJI["lock"]} <b>Создай приложение по <a href="https://developer.spotify.com/dashboard">этой ссылке</a></b>\n\n'
                 f"{CUSTOM_EMOJI['warning']} <b>Важно:</b> redirect_url приложения должен быть <code>https://sp.fajox.one</code>\n\n"
                 f"<b>{CUSTOM_EMOJI['key']} Заполни <code>client_id</code> и <code>client_secret</code> в конфигурации</b>\n\n"
-                f"<b>{CUSTOM_EMOJI['computer']} И снова напиши <code>{prefix}spauth</code></b>",
+                f"<b>{CUSTOM_EMOJI['computer']} И снова напиши <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
@@ -1145,27 +1162,24 @@ def register(kernel):
         args = event.text.split()
         if len(args) < 2:
             await event.edit(
-                f"{CUSTOM_EMOJI['error']} <b>Должно быть <code>{prefix}spcode код_авторизации</code></b>",
+                f"{CUSTOM_EMOJI['error']} <b>Должно быть <code>{self.get_prefix()}spcode код_авторизации</code></b>",
                 parse_mode="html",
             )
             return
 
-        code = args[1]
+        code: str = args[1]
         sp_oauth = spotipy.oauth2.SpotifyOAuth(
-            client_id=get_config().get("spots_client_id"),
-            client_secret=get_config().get("spots_client_secret"),
+            client_id=self.config["spots_client_id"],
+            client_secret=self.config["spots_client_secret"],
             redirect_uri="https://sp.fajox.one",
-            scope=get_config().get("spots_scopes"),
+            scope=self.config["spots_scopes"],
         )
 
         try:
             token_info = sp_oauth.get_access_token(code)
-            get_config()["spots_auth_token"] = token_info["access_token"]
-            get_config()["spots_refresh_token"] = token_info["refresh_token"]
-            await kernel.save_module_config(__name__, config.to_dict())
-
-            sp = spotipy.Spotify(auth=token_info["access_token"])
-            current_playback = sp.current_playback()
+            self.config["spots_auth_token"] = token_info["access_token"]
+            self.config["spots_refresh_token"] = token_info["refresh_token"]
+            await self.save_config()
 
             await event.edit(
                 f"<b>{CUSTOM_EMOJI['key']} Код авторизации установлен!</b>\n\n{CUSTOM_EMOJI['music']} <b>Наслаждайся музыкой!</b>",
@@ -1182,18 +1196,17 @@ def register(kernel):
                 parse_mode="html",
             )
 
-    @kernel.register.command("spnow")
-    # Текущий трек
-    async def spnow_cmd(event):
-        if not get_config().get("spots_auth_token"):
+    @command("spnow", doc_ru="Скачать и отправить текущий трек", doc_en="Download and send current track")
+    async def cmd_spnow(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_auth_token"]:
             await event.edit(
-                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
 
         try:
-            sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1208,29 +1221,29 @@ def register(kernel):
             )
 
             track = current_playback["item"]
-            track_name = track.get("name", "Unknown Track")
-            artist_name = track["artists"][0].get("name", "Unknown Artist")
-            album_name = track["album"].get("name", "Unknown Album")
-            duration_ms = track.get("duration_ms", 0)
+            track_name: str = track.get("name", "Unknown Track")
+            artist_name: str = track["artists"][0].get("name", "Unknown Artist")
+            album_name: str = track["album"].get("name", "Unknown Album")
+            duration_ms: int = track.get("duration_ms", 0)
 
             playlist = (
                 current_playback.get("context", {}).get("uri", "").split(":")[-1]
                 if current_playback.get("context")
                 else None
             )
-            device_name = (
+            device_name: str = (
                 current_playback.get("device", {}).get("name", "Unknown Device")
                 + " "
                 + current_playback.get("device", {}).get("type", "")
             )
 
             user_profile = sp.current_user()
-            user_name = user_profile["display_name"]
-            user_id = user_profile["id"]
+            user_name: str = user_profile["display_name"]
+            user_id: str = user_profile["id"]
 
-            track_url = track["external_urls"]["spotify"]
-            user_url = f"https://open.spotify.com/user/{user_id}"
-            playlist_url = (
+            track_url: str = track["external_urls"]["spotify"]
+            user_url: str = f"https://open.spotify.com/user/{user_id}"
+            playlist_url: str | None = (
                 f"https://open.spotify.com/playlist/{playlist}" if playlist else None
             )
 
@@ -1252,9 +1265,9 @@ def register(kernel):
             )
 
             with tempfile.TemporaryDirectory() as temp_dir:
-                if musicdl and hasattr(musicdl, "dl"):
+                if self.musicdl and hasattr(self.musicdl, "dl"):
                     try:
-                        audio_path = await musicdl.dl(
+                        audio_path = await self.musicdl.dl(
                             f"{artist_name} - {track_name}", only_document=True
                         )
                         if not audio_path:
@@ -1276,13 +1289,14 @@ def register(kernel):
                     )
                     return
 
-                album_art_url = track["album"]["images"][0]["url"]
+                album_art_url: str = track["album"]["images"][0]["url"]
                 async with aiohttp.ClientSession() as session:
                     async with session.get(album_art_url) as response:
                         art_path = os.path.join(temp_dir, "cover.jpg")
                         with open(art_path, "wb") as f:
                             f.write(await response.read())
-                await client.send_file(
+
+                await self.client.send_file(
                     event.chat_id,
                     audio_path,
                     parse_mode="html",
@@ -1306,7 +1320,7 @@ def register(kernel):
         except spotipy.exceptions.SpotifyException as e:
             if "The access token expired" in str(e):
                 await event.edit(
-                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                     parse_mode="html",
                 )
             elif "NO_ACTIVE_DEVICE" in str(e):
@@ -1325,18 +1339,17 @@ def register(kernel):
                 parse_mode="html",
             )
 
-    @kernel.register.command("now")
-    # Красивая карточка с текущим треком
-    async def now_cmd(event):
-        if not get_config().get("spots_auth_token"):
+    @command("now", doc_ru="Красивая карточка с текущим треком", doc_en="Stylish card for current track")
+    async def cmd_now(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_auth_token"]:
             await event.edit(
-                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
 
         try:
-            sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1351,22 +1364,22 @@ def register(kernel):
             )
 
             track = current_playback["item"]
-            track_name = track.get("name", "Unknown Track")
-            artist_name = track["artists"][0].get("name", "Unknown Artist")
-            album_name = track["album"].get("name", "Unknown Album")
-            duration_ms = track.get("duration_ms", 0)
-            progress_ms = current_playback.get("progress_ms", 0)
-            track_id = track.get("id", "")
+            track_name: str = track.get("name", "Unknown Track")
+            artist_name: str = track["artists"][0].get("name", "Unknown Artist")
+            album_name: str = track["album"].get("name", "Unknown Album")
+            duration_ms: int = track.get("duration_ms", 0)
+            progress_ms: int = current_playback.get("progress_ms", 0)
+            track_id: str = track.get("id", "")
 
             duration_min, duration_sec = divmod(duration_ms // 1000, 60)
             duration_str = f"{duration_min}:{duration_sec:02d}"
             progress_min, progress_sec = divmod(progress_ms // 1000, 60)
             progress_str = f"{progress_min}:{progress_sec:02d}"
 
-            track_url = track["external_urls"]["spotify"]
-            song_link_url = f"https://song.link/s/{track_id}"
+            track_url: str = track["external_urls"]["spotify"]
+            song_link_url: str = f"https://song.link/s/{track_id}"
 
-            track_info = {
+            track_info: dict[str, Any] = {
                 "track_name": track_name,
                 "artist_name": artist_name,
                 "album_name": album_name,
@@ -1376,11 +1389,11 @@ def register(kernel):
                 "track_id": track_id,
             }
 
-            card_path = await _create_song_card(track_info)
+            card_path = await self._create_song_card(track_info)
             caption = f"🎵 | <a href='{track_url}'>Spotify</a> • <a href='{song_link_url}'>song.link</a>"
 
             if card_path:
-                await client.send_file(
+                await self.client.send_file(
                     event.chat_id,
                     card_path,
                     caption=caption,
@@ -1389,15 +1402,15 @@ def register(kernel):
                 )
                 try:
                     os.remove(card_path)
-                except:
+                except Exception:
                     pass
             else:
-                album_art_url = track["album"]["images"][0]["url"]
+                album_art_url: str = track["album"]["images"][0]["url"]
                 async with aiohttp.ClientSession() as session:
                     async with session.get(album_art_url) as response:
                         art_data = await response.read()
 
-                await client.send_file(
+                await self.client.send_file(
                     event.chat_id,
                     art_data,
                     caption=f"<b>🎧 {track_name}</b>\n<b>👤 {artist_name}</b>\n<b>💿 {album_name}</b>\n\n"
@@ -1414,7 +1427,7 @@ def register(kernel):
         except spotipy.exceptions.SpotifyException as e:
             if "The access token expired" in str(e):
                 await event.edit(
-                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                     parse_mode="html",
                 )
             elif "NO_ACTIVE_DEVICE" in str(e):
@@ -1433,18 +1446,66 @@ def register(kernel):
                 parse_mode="html",
             )
 
-    @kernel.register.command("rlyrics")
-    # Показать текст текущего трека в реальном времени
-    async def rlyrics_cmd(event):
-        if not get_config().get("spots_auth_token"):
+    @callback(ttl=60)
+    async def on_click_cancel_rlyrics(
+        self, call: events.CallbackQuery.Event, data=None
+    ) -> None:
+        """Отмена инлайн-сессии rlyrics."""
+        self._pending_rlyrics = None
+        if self._realtime_lyrics_data.get("active"):
+            self._realtime_lyrics_data["active"] = False
+        await call.edit("⏹️ <b>Синхронизация текста отменена</b>", parse_mode="html")
+        await call.answer("Отменено")
+
+    @callback(ttl=60)
+    async def on_click_rlyrics(self, call: events.CallbackQuery.Event, data=None) -> None:
+        """Коллбэк для инлайн-формы rlyrics — запускает реалтайм текст."""
+        pending = getattr(self, "_pending_rlyrics", None)
+        if not pending:
+            await call.answer("Сессия устарела, запусти команду заново.", alert=True)
+            return
+
+        header = pending["header"]
+        initial_text = header + "🎵 Ожидание синхронизации..."
+
+        await call.edit(
+            initial_text,
+            parse_mode="html",
+            buttons=self._cancel_buttons(self.on_click_cancel_rlyrics),
+        )
+        await call.answer()
+
+        # Останавливаем предыдущую сессию если есть
+        if self._realtime_lyrics_data.get("active"):
+            self._realtime_lyrics_data["active"] = False
+
+        self._realtime_lyrics_data = {
+            "callback": call,
+            "message": pending.get("message"),
+            "message_id": pending["message_id"],
+            "chat_id": pending["chat_id"],
+            "lyrics_data": pending["lyrics_data"],
+            "track_id": pending["track_id"],
+            "header": header,
+            "cancel_callback": self.on_click_cancel_rlyrics,
+            "last_line_index": -1,
+            "active": True,
+        }
+        self._pending_rlyrics = None
+
+        asyncio.create_task(self._realtime_lyrics_loop())
+
+    @command("rlyrics", doc_ru="Текст трека в реальном времени", doc_en="Real-time synced lyrics")
+    async def cmd_rlyrics(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_auth_token"]:
             await event.edit(
-                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
 
         try:
-            sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1460,20 +1521,20 @@ def register(kernel):
             )
 
             track = current_playback["item"]
-            track_name = track.get("name", "Unknown Track")
-            artist_name = track["artists"][0].get("name", "Unknown Artist")
-            track_url = track["external_urls"]["spotify"]
-            duration_ms = track.get("duration_ms", 0)
-            track_id = track.get("id", "")
+            track_name: str = track.get("name", "Unknown Track")
+            artist_name: str = track["artists"][0].get("name", "Unknown Artist")
+            track_url: str = track["external_urls"]["spotify"]
+            duration_ms: int = track.get("duration_ms", 0)
+            track_id: str = track.get("id", "")
 
-            lyrics_data = await _get_synced_lyrics_data(
+            lyrics_data = await self._get_synced_lyrics_data(
                 artist_name, track_name, duration_ms
             )
 
             if not lyrics_data:
                 await event.edit(
                     f'{CUSTOM_EMOJI["error2"]} <b>Синхронизированный текст для трека <a href="{track_url}">{artist_name} — {track_name}</a> не найден!</b>\n\n'
-                    f"<i>Попробуйте команду <code>{prefix}lyrics</code> для поиска обычного текста.</i>",
+                    f"<i>Попробуйте команду <code>{self.get_prefix()}lyrics</code> для поиска обычного текста.</i>",
                     parse_mode="html",
                 )
                 return
@@ -1482,20 +1543,56 @@ def register(kernel):
                 f"{CUSTOM_EMOJI['scroll']} <b>Текст в реальном времени</b>\n"
                 f'<a href="{track_url}">{artist_name} — {track_name}</a>\n\n'
             )
-            initial_text = header + "🎵 Ожидание синхронизации..."
-            sent_message = await event.edit(initial_text, parse_mode="html")
 
-            kernel._realtime_lyrics_data = {
-                "message_id": sent_message.id,
+            _, sms = await self.inline(
+                event.chat_id,
+                f"{CUSTOM_EMOJI['loading']} <b>Загружаю текст...</b>",
+                buttons=[
+                    [
+                        self.Button.inline("▶️ Запустить", self.on_click_rlyrics),
+                        self.Button.inline("⏹️ Отмена", self.on_click_cancel_rlyrics),
+                    ]
+                ],
+            )
+
+            if not sms:
+                # Фоллбэк: обычное редактирование если inline не сработал
+                sent_message = await event.edit(
+                    header + "🎵 Ожидание синхронизации...", parse_mode="html"
+                )
+                self._pending_rlyrics = None
+                self._realtime_lyrics_data = {
+                    "message": sent_message,
+                    "message": sent_message,
+                    "message_id": sent_message.id,
+                    "chat_id": event.chat_id,
+                    "lyrics_data": lyrics_data,
+                    "track_id": track_id,
+                    "header": header,
+                    "cancel_callback": self.on_click_cancel_rlyrics,
+                    "last_line_index": -1,
+                    "active": True,
+                }
+                asyncio.create_task(self._realtime_lyrics_loop())
+                return
+
+            # Сохраняем данные для коллбэка
+            self._pending_rlyrics = {
+                "message": sms,
+                "message": sms,
+                "message_id": sms.id,
                 "chat_id": event.chat_id,
                 "lyrics_data": lyrics_data,
                 "track_id": track_id,
                 "header": header,
-                "last_line_index": -1,
-                "active": True,
             }
 
-            asyncio.create_task(_realtime_lyrics_loop())
+            # Авто-клик по кнопке — запустит коллбэк и сразу начнёт сессию
+            await sms.click(0)
+
+            # Удаляем исходное сообщение с командой
+            await event.delete()
+
         except spotipy.oauth2.SpotifyOauthError as e:
             await event.edit(
                 f"{CUSTOM_EMOJI['error']} <b>Ошибка авторизации:</b> <code>{str(e)}</code>",
@@ -1504,7 +1601,7 @@ def register(kernel):
         except spotipy.exceptions.SpotifyException as e:
             if "The access token expired" in str(e):
                 await event.edit(
-                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                     parse_mode="html",
                 )
             elif "NO_ACTIVE_DEVICE" in str(e):
@@ -1523,14 +1620,10 @@ def register(kernel):
                 parse_mode="html",
             )
 
-    @kernel.register.command("stoplyrics")
-    # Остановить обновление текста в реальном времени
-    async def stoplyrics_cmd(event):
-
-        if hasattr(
-            kernel, "_realtime_lyrics_data"
-        ) and kernel._realtime_lyrics_data.get("active"):
-            kernel._realtime_lyrics_data["active"] = False
+    @command("stoplyrics", doc_ru="Остановить текст в реальном времени", doc_en="Stop real-time lyrics")
+    async def cmd_stoplyrics(self, event: events.NewMessage.Event) -> None:
+        if self._realtime_lyrics_data.get("active"):
+            self._realtime_lyrics_data["active"] = False
             await event.edit(
                 "✅ <b>Обновление текста в реальном времени остановлено</b>",
                 parse_mode="html",
@@ -1540,19 +1633,81 @@ def register(kernel):
                 "❌ <b>Сеанс синхронизации не активен</b>", parse_mode="html"
             )
 
-    @kernel.register.command("playnow")
-    # Live-отображение текущего трека с текстом в реальном времени
-    async def playnow_cmd(event):
+    @callback(ttl=60)
+    async def on_click_cancel_playnow(
+        self, call: events.CallbackQuery.Event, data=None
+    ) -> None:
+        """Отмена инлайн-сессии playnow."""
+        self._pending_playnow = None
+        if self._playnow_data.get("active"):
+            self._playnow_data["active"] = False
+        await call.edit("⏹️ <b>Live-отображение трека отменено</b>", parse_mode="html")
+        await call.answer("Отменено")
 
-        if not get_config().get("spots_auth_token"):
+    @callback(ttl=60)
+    async def on_click_playnow(self, call: events.CallbackQuery.Event, data=None) -> None:
+        """Коллбэк для инлайн-формы playnow — отправляет карточку + запускает live-текст."""
+        pending = getattr(self, "_pending_playnow", None)
+        if not pending:
+            await call.answer("Сессия устарела, запусти команду заново.", alert=True)
+            return
+
+        card_path = pending["card_path"]
+        initial_caption = pending["initial_caption"]
+        lyrics_data = pending["lyrics_data"]
+        track_id = pending["track_id"]
+        chat_id = pending["chat_id"]
+
+        # Отправляем карточку через edit — file= работает только в edit, не в send
+        if card_path:
+            await call.edit(
+                initial_caption,
+                file=card_path,
+                parse_mode="html",
+                buttons=self._cancel_buttons(self.on_click_cancel_playnow),
+            )
+            try:
+                os.remove(card_path)
+            except Exception:
+                pass
+        else:
+            await call.edit(
+                initial_caption,
+                parse_mode="html",
+                buttons=self._cancel_buttons(self.on_click_cancel_playnow),
+            )
+
+        await call.answer()
+
+        if self._playnow_data.get("active"):
+            self._playnow_data["active"] = False
+
+        self._playnow_data = {
+            "callback": call,
+            "message": pending.get("message"),
+            "message_id": pending["message_id"],
+            "chat_id": chat_id,
+            "lyrics_data": lyrics_data,
+            "current_track_id": track_id,
+            "cancel_callback": self.on_click_cancel_playnow,
+            "last_line_index": -1,
+            "active": True,
+        }
+        self._pending_playnow = None
+
+        asyncio.create_task(self._playnow_loop())
+
+    @command("playnow", doc_ru="Live-карточка трека с текстом", doc_en="Live track card with lyrics")
+    async def cmd_playnow(self, event: events.NewMessage.Event) -> None:
+        if not self.config["spots_auth_token"]:
             await event.edit(
-                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                 parse_mode="html",
             )
             return
 
         try:
-            sp = spotipy.Spotify(auth=get_config().get("spots_auth_token"))
+            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1567,58 +1722,90 @@ def register(kernel):
             )
 
             track = current_playback["item"]
-            track_name = track.get("name", "Unknown Track")
-            artist_name = track["artists"][0].get("name", "Unknown Artist")
-            track_url = track["external_urls"]["spotify"]
-            duration_ms = track.get("duration_ms", 0)
-            track_id = track.get("id", "")
+            track_name: str = track.get("name", "Unknown Track")
+            artist_name: str = track["artists"][0].get("name", "Unknown Artist")
+            track_url: str = track["external_urls"]["spotify"]
+            duration_ms: int = track.get("duration_ms", 0)
+            track_id: str = track.get("id", "")
 
-            track_info = {
+            track_info: dict[str, Any] = {
                 "track_name": track_name,
                 "artist_name": artist_name,
                 "album_art": track["album"]["images"][0]["url"],
                 "track_id": track_id,
             }
 
-            card_path = await _create_song_card_no_time(track_info)
-            lyrics_data = await _get_synced_lyrics_data(
+            card_path = await self._create_song_card_no_time(track_info)
+            lyrics_data = await self._get_synced_lyrics_data(
                 artist_name, track_name, duration_ms
             )
 
             if lyrics_data:
                 initial_caption = "🎵 Ожидание синхронизации..."
             else:
-                initial_caption = f"❌ <i>Синхронизированный текст для трека не найден</i>\n\n<a href='{track_url}'>{artist_name} — {track_name}</a>"
-
-            if card_path:
-                sent_message = await client.send_file(
-                    event.chat_id,
-                    card_path,
-                    caption=initial_caption,
-                    parse_mode="html",
-                    reply_to=event.reply_to_msg_id if event.is_reply else None,
+                initial_caption = (
+                    f"❌ <i>Синхронизированный текст для трека не найден</i>\n\n"
+                    f"<a href='{track_url}'>{artist_name} — {track_name}</a>"
                 )
-                try:
-                    os.remove(card_path)
-                except:
-                    pass
-            else:
-                sent_message = await event.edit(initial_caption, parse_mode="html")
+            _, sms = await self.inline(
+                event.chat_id,
+                f"{CUSTOM_EMOJI['loading']} <b>Загружаю карточку...</b>",
+                buttons=[
+                    [
+                        self.Button.inline("▶️ Запустить", self.on_click_playnow),
+                        self.Button.inline("⏹️ Отмена", self.on_click_cancel_playnow),
+                    ]
+                ],
+            )
 
-            if hasattr(kernel, "_playnow_data") and kernel._playnow_data.get("active"):
-                kernel._playnow_data["active"] = False
+            if not sms:
+                # Фоллбэк: старое поведение если inline не сработал
+                if card_path:
+                    sent_message = await self.client.send_file(
+                        event.chat_id,
+                        card_path,
+                        caption=initial_caption,
+                        parse_mode="html",
+                        reply_to=event.reply_to_msg_id if event.is_reply else None,
+                    )
+                    try:
+                        os.remove(card_path)
+                    except Exception:
+                        pass
+                else:
+                    sent_message = await event.edit(initial_caption, parse_mode="html")
 
-            kernel._playnow_data = {
-                "message_id": sent_message.id,
+                if self._playnow_data.get("active"):
+                    self._playnow_data["active"] = False
+
+                self._playnow_data = {
+                    "message_id": sent_message.id,
+                    "chat_id": event.chat_id,
+                    "lyrics_data": lyrics_data,
+                    "current_track_id": track_id,
+                    "cancel_callback": self.on_click_cancel_playnow,
+                    "last_line_index": -1,
+                    "active": True,
+                }
+                await event.delete()
+                asyncio.create_task(self._playnow_loop())
+                return
+
+            # Сохраняем данные для коллбэка
+            self._pending_playnow = {
+                "message_id": sms.id,
                 "chat_id": event.chat_id,
+                "card_path": card_path,
+                "initial_caption": initial_caption,
                 "lyrics_data": lyrics_data,
-                "current_track_id": track_id,
-                "last_line_index": -1,
-                "active": True,
+                "track_id": track_id,
             }
 
+            # Авто-клик — триггерит коллбэк, который edit-нет карточку с файлом
+            await sms.click(0)
+
             await event.delete()
-            asyncio.create_task(_playnow_loop())
+
         except spotipy.oauth2.SpotifyOauthError as e:
             await event.edit(
                 f"{CUSTOM_EMOJI['error']} <b>Ошибка авторизации:</b> <code>{str(e)}</code>",
@@ -1627,7 +1814,7 @@ def register(kernel):
         except spotipy.exceptions.SpotifyException as e:
             if "The access token expired" in str(e):
                 await event.edit(
-                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{prefix}spauth</code></b>",
+                    f"{CUSTOM_EMOJI['error']} <b>Авторизуйся в свой аккаунт через <code>{self.get_prefix()}spauth</code></b>",
                     parse_mode="html",
                 )
             elif "NO_ACTIVE_DEVICE" in str(e):
@@ -1646,11 +1833,10 @@ def register(kernel):
                 parse_mode="html",
             )
 
-    @kernel.register.command("stopplaynow")
-    # Остановить live-отображение трека
-    async def stopplaynow_cmd(event):
-        if hasattr(kernel, "_playnow_data") and kernel._playnow_data.get("active"):
-            kernel._playnow_data["active"] = False
+    @command("stopplaynow", doc_ru="Остановить live-отображение трека", doc_en="Stop live track display")
+    async def cmd_stopplaynow(self, event: events.NewMessage.Event) -> None:
+        if self._playnow_data.get("active"):
+            self._playnow_data["active"] = False
             await event.edit(
                 "✅ <b>Live-отображение трека остановлено</b>", parse_mode="html"
             )
