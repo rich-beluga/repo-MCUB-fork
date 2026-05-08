@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
+import time
 from typing import Any
 
 import requests
@@ -42,12 +44,16 @@ class Banners:
         artists: str | list[str],
         track_cover: bytes,
         font_url: str,
+        theme: str = "default",
+        progress: float | None = None,
     ) -> None:
         self.title = title or "Unknown"
         self.artists = ", ".join(artists) if isinstance(artists, list) else artists
         self.artists = self.artists or "Unknown"
         self.track_cover = track_cover
         self.font_url = font_url
+        self.theme = theme if theme in {"default", "minimal", "clean"} else "default"
+        self.progress = progress
 
     @staticmethod
     def _request_bytes(url: str) -> bytes:
@@ -142,7 +148,8 @@ class Banners:
             font=artist_font,
             fill="#B3B3B3",
         )
-        draw.text((text_x, 430), "last.fm", font=lfm_font, fill="white")
+        draw.text((text_x, 430), "last.fm", font=lfm_font, fill=self._accent())
+        self._draw_progress_bar(draw, text_x, 510, text_width_limit, 16)
 
         return self._to_png(img)
 
@@ -191,8 +198,9 @@ class Banners:
             ((width - lfm_w) / 2, text_area_y + 180),
             "last.fm",
             font=lfm_font,
-            fill="white",
+            fill=self._accent(),
         )
+        self._draw_progress_bar(draw, padding, text_area_y + 280, width - (padding * 2), 18)
 
         return self._to_png(img)
 
@@ -204,6 +212,28 @@ class Banners:
         by.name = "banner.png"
         return by
 
+    def _accent(self) -> str:
+        if self.theme == "minimal":
+            return "#D1D1D1"
+        if self.theme == "clean":
+            return "#FF3D3D"
+        return "white"
+
+    def _draw_progress_bar(
+        self, draw: ImageDraw.ImageDraw, x: int, y: int, width: int, height: int
+    ) -> None:
+        if self.progress is None:
+            return
+        progress = max(0.0, min(1.0, float(self.progress)))
+        bg = "#2E2E2E" if self.theme != "minimal" else "#555555"
+        fg = "#FF3D3D" if self.theme != "minimal" else "#E8E8E8"
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=height // 2, fill=bg)
+        draw.rounded_rectangle(
+            (x, y, x + max(4, int(width * progress)), y + height),
+            radius=height // 2,
+            fill=fg,
+        )
+
 
 class LastFmMod(ModuleBase):
     """Module for Last.fm now playing banners."""
@@ -213,7 +243,7 @@ class LastFmMod(ModuleBase):
         "en": "Module for Last.fm now playing banners",
         "ru": "Модуль для баннеров текущего трека Last.fm",
     }
-    version = "1.1.1"
+    version = "1.2.0"
     author = "@ke_mods"
     dependencies = ["pillow", "requests"]
 
@@ -223,12 +253,14 @@ class LastFmMod(ModuleBase):
             "nick_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Put your nickname from last.fm</b>",
             "uploading": "<emoji document_id=5841359499146825803>🕔</emoji> <i>Uploading banner...</i>",
             "api_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Last.fm API error:</b> <code>{error}</code>",
+            "no_lyrics": "<emoji document_id=5465665476971471368>❌</emoji> <b>Lyrics not found</b>",
         },
         "ru": {
             "no_track": "<emoji document_id=5465665476971471368>❌</emoji> <b>Сейчас ничего не играет</b>",
             "nick_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Укажите ваш никнейм с Last.fm</b>",
             "uploading": "<emoji document_id=5841359499146825803>🕔</emoji> <i>Загрузка баннера...</i>",
             "api_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Ошибка Last.fm API:</b> <code>{error}</code>",
+            "no_lyrics": "<emoji document_id=5465665476971471368>❌</emoji> <b>Текст не найден</b>",
         },
     }
 
@@ -261,10 +293,48 @@ class LastFmMod(ModuleBase):
         ConfigValue(
             "status_text",
             None,
-            description='text loading message',
-            validator=String(
-                default=None
-                )
+            description="Text loading message",
+            validator=String(default=None),
+        ),
+        ConfigValue(
+            "msg_no_track",
+            "",
+            description="Override: no track text",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "msg_nick_error",
+            "",
+            description="Override: nickname required text",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "msg_api_error",
+            "",
+            description="Override: API error template with {error}",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "profile_text",
+            "<b>👤 {lastfm_username}</b>\n"
+            "• <b>Playcount:</b> <code>{lastfm_playcount}</code>\n"
+            "• <b>Country:</b> <code>{lastfm_country}</code>\n"
+            "• <b>Registered:</b> <code>{lastfm_registered}</code>\n"
+            "• <b>URL:</b> {lastfm_profile_url}",
+            description="Profile output template",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "lyrics_text",
+            "<b>📜 {lastfm_song_artist} — {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
+            description="Lyrics output template, supports {lyrics}",
+            validator=String(default=""),
+        ),
+        ConfigValue(
+            "rlyrics_text",
+            "<b>🎵 Live lyrics:</b> {lastfm_song_artist} — {lastfm_song_name}\n\n{lyrics}",
+            description="Real-time lyrics output template, supports {lyrics}",
+            validator=String(default=""),
         ),
         ConfigValue(
             "font",
@@ -281,6 +351,12 @@ class LastFmMod(ModuleBase):
             validator=Choice(choices=["horizontal", "vertical"], default="horizontal"),
         ),
         ConfigValue(
+            "banner_theme",
+            "default",
+            description="Banner theme",
+            validator=Choice(choices=["default", "minimal", "clean"], default="default"),
+        ),
+        ConfigValue(
             "fallback_cover",
             "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
             description="Fallback cover URL if track has no image",
@@ -293,6 +369,12 @@ class LastFmMod(ModuleBase):
             "460cda35be2fbf4f28e8ea7a38580730",
             description="Last.fm API key",
             validator=Secret(default="460cda35be2fbf4f28e8ea7a38580730"),
+        ),
+        ConfigValue(
+            "lrclib_enabled",
+            "true",
+            description="Enable lyrics by LRCLib (true/false)",
+            validator=Choice(choices=["true", "false"], default="true"),
         ),
     )
 
@@ -307,6 +389,20 @@ class LastFmMod(ModuleBase):
             "api_key": "460cda35be2fbf4f28e8ea7a38580730",
             "status_text": None,
             "placeholders": "",
+            "msg_no_track": "",
+            "msg_nick_error": "",
+            "msg_api_error": "",
+            "profile_text": (
+                "<b>👤 {lastfm_username}</b>\n"
+                "• <b>Playcount:</b> <code>{lastfm_playcount}</code>\n"
+                "• <b>Country:</b> <code>{lastfm_country}</code>\n"
+                "• <b>Registered:</b> <code>{lastfm_registered}</code>\n"
+                "• <b>URL:</b> {lastfm_profile_url}"
+            ),
+            "lyrics_text": "<b>📜 {lastfm_song_artist} — {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
+            "rlyrics_text": "<b>🎵 Live lyrics:</b> {lastfm_song_artist} — {lastfm_song_name}\n\n{lyrics}",
+            "banner_theme": "default",
+            "lrclib_enabled": "true",
         }
         config_dict = await self.kernel.get_module_config(self.name, defaults)
         utils.register_decorated_placeholders(self.name, self)
@@ -314,6 +410,7 @@ class LastFmMod(ModuleBase):
         self.config.from_dict(config_dict)
         self.kernel.store_module_config_schema(self.name, self.config)
         await self.kernel.save_module_config(self.name, self.config.to_dict())
+        self._rlyrics_data: dict[str, Any] = {"active": False}
 
     async def on_unload(self) -> None:
         utils.unregister_scope(self.name)
@@ -331,6 +428,10 @@ class LastFmMod(ModuleBase):
         return response.content
 
     @staticmethod
+    def _escape(value: Any) -> str:
+        return utils.escape_html(str("" if value is None else value))
+
+    @staticmethod
     def _find_cover_url(track: dict[str, Any]) -> str | None:
         images = track.get("image") or []
         for size in ("extralarge", "large", "medium", "small"):
@@ -340,6 +441,10 @@ class LastFmMod(ModuleBase):
         return None
 
     async def _fetch_now_playing(self, username: str, api_key: str) -> dict[str, Any] | None:
+        cache_key = f"lastfm:np:{username}"
+        cached = self.kernel.cache.get(cache_key)
+        if cached:
+            return cached
         data = await asyncio.to_thread(
             self._get_json,
             "https://ws.audioscrobbler.com/2.0/",
@@ -355,8 +460,123 @@ class LastFmMod(ModuleBase):
         tracks = data.get("recenttracks", {}).get("track", [])
         for track in tracks:
             if track.get("@attr", {}).get("nowplaying") == "true":
+                self.kernel.cache.set(cache_key, track, ttl=15)
                 return track
         return None
+
+    async def _fetch_profile(self, username: str, api_key: str) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._get_json,
+            "https://ws.audioscrobbler.com/2.0/",
+            {
+                "method": "user.getinfo",
+                "user": username,
+                "api_key": api_key,
+                "format": "json",
+            },
+        )
+
+    async def _fetch_track_info(self, artist: str, track: str, api_key: str) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._get_json,
+            "https://ws.audioscrobbler.com/2.0/",
+            {
+                "method": "track.getInfo",
+                "artist": artist,
+                "track": track,
+                "api_key": api_key,
+                "format": "json",
+            },
+        )
+
+    @staticmethod
+    def _clean_name(value: str) -> str:
+        return re.sub(r"\([^)]*\)", "", str(value or "")).strip()
+
+    async def _lyrics_from_lrclib(
+        self, artist: str, title: str, duration_s: int | None = None
+    ) -> dict[str, Any] | None:
+        if str(self.config.get("lrclib_enabled") or "true") != "true":
+            return None
+        params: dict[str, Any] = {
+            "artist_name": self._clean_name(artist),
+            "track_name": self._clean_name(title),
+        }
+        if duration_s:
+            params["duration"] = duration_s
+        data = await asyncio.to_thread(
+            self._get_json,
+            "https://lrclib.net/api/search",
+            params,
+        )
+        if not isinstance(data, list) or not data:
+            return None
+        item = data[0]
+        synced = item.get("syncedLyrics")
+        plain = item.get("plainLyrics")
+        if synced:
+            return {"type": "synced", "lyrics": synced, "plain": plain}
+        if plain:
+            return {"type": "plain", "lyrics": plain}
+        return None
+
+    @staticmethod
+    def _parse_synced_lyrics(synced_lyrics: str) -> list[dict[str, Any]]:
+        parsed: list[dict[str, Any]] = []
+        for raw_line in (synced_lyrics or "").splitlines():
+            match = re.match(r"\[(\d{2}):(\d{2})\.(\d{2})\](.*)", raw_line.strip())
+            if not match:
+                continue
+            minutes, seconds, centiseconds, text = match.groups()
+            text = text.strip()
+            if not text:
+                continue
+            parsed.append(
+                {
+                    "time_ms": (int(minutes) * 60 + int(seconds)) * 1000 + int(centiseconds) * 10,
+                    "text": text,
+                }
+            )
+        return parsed
+
+    @staticmethod
+    def _format_realtime_lyrics(lyrics_data: list[dict[str, Any]], current_index: int) -> str:
+        if not lyrics_data or current_index < 0:
+            return "<i>Waiting for sync...</i>"
+        out: list[str] = []
+        start = max(0, current_index - 2)
+        end = min(len(lyrics_data), current_index + 3)
+        for i in range(start, end):
+            txt = LastFmMod._escape(lyrics_data[i]["text"])
+            if i == current_index:
+                out.append(f"<b>▶ {txt}</b>")
+            elif i < current_index:
+                out.append(f"<i>{txt}</i>")
+            else:
+                out.append(txt)
+        return "\n".join(out)
+
+    @staticmethod
+    def _current_line_index(lyrics_data: list[dict[str, Any]], progress_ms: int) -> int:
+        idx = -1
+        for i, item in enumerate(lyrics_data):
+            if item["time_ms"] <= progress_ms:
+                idx = i
+            else:
+                break
+        return idx
+
+    async def _render_template(self, template: str, data: dict[str, Any]) -> str:
+        try:
+            return await utils.resolve_placeholders(self.name, template, data=data, strict=False)
+        except Exception:
+            return template
+
+    async def _msg(self, key: str, cfg_key: str, data: dict[str, Any] | None = None, **kwargs: Any) -> str:
+        custom = str(self.config.get(cfg_key) or "").strip()
+        if custom:
+            return await self._render_template(custom, (data or {}) | kwargs)
+        return self.strings(key, **kwargs)
 
     async def _lastfm_placeholder_data(self, data: dict[str, Any]) -> dict[str, str]:
         cache_key = "__lastfm_placeholder_data"
@@ -369,9 +589,7 @@ class LastFmMod(ModuleBase):
             "lastfm_song_album": "Unknown",
             "lastfm_song_url": "",
             "lastfm_cover_url": "",
-            "lastfm_username": utils.escape_html(
-                str(self.config.get("username") or "").strip()
-            ),
+            "lastfm_username": self._escape(str(self.config.get("username") or "").strip()),
         }
 
         username = str(self.config.get("username") or "").strip()
@@ -394,16 +612,16 @@ class LastFmMod(ModuleBase):
             self.config.get("fallback_cover") or ""
         ).strip()
         result = {
-            "lastfm_song_name": utils.escape_html(track.get("name") or "Unknown"),
-            "lastfm_song_artist": utils.escape_html(
+            "lastfm_song_name": self._escape(track.get("name") or "Unknown"),
+            "lastfm_song_artist": self._escape(
                 track.get("artist", {}).get("#text") or "Unknown"
             ),
-            "lastfm_song_album": utils.escape_html(
+            "lastfm_song_album": self._escape(
                 track.get("album", {}).get("#text") or "Unknown"
             ),
-            "lastfm_song_url": utils.escape_html(track.get("url") or ""),
-            "lastfm_cover_url": utils.escape_html(cover_url),
-            "lastfm_username": utils.escape_html(username),
+            "lastfm_song_url": self._escape(track.get("url") or ""),
+            "lastfm_cover_url": self._escape(cover_url),
+            "lastfm_username": self._escape(username),
         }
         data[cache_key] = result
         return result
@@ -459,23 +677,23 @@ class LastFmMod(ModuleBase):
                 self.name,
                 template,
                 data={
-                    "lastfm_song_artist": utils.escape_html(artist),
-                    "lastfm_song_name": utils.escape_html(name),
-                    "lastfm_song_album": utils.escape_html(album),
-                    "lastfm_song_url": utils.escape_html(song_url),
-                    "lastfm_cover_url": utils.escape_html(cover_url),
-                    "lastfm_username": utils.escape_html(username),
+                    "lastfm_song_artist": self._escape(artist),
+                    "lastfm_song_name": self._escape(name),
+                    "lastfm_song_album": self._escape(album),
+                    "lastfm_song_url": self._escape(song_url),
+                    "lastfm_cover_url": self._escape(cover_url),
+                    "lastfm_username": self._escape(username),
                 },
                 strict=False,
             )
         except Exception:
-            return f"<b>{utils.escape_html(name)}</b> — <b>{utils.escape_html(artist)}</b>"
+            return f"<b>{self._escape(name)}</b> — <b>{self._escape(artist)}</b>"
 
     @command("nowplay", alias=["np"], doc_ru="показать текущий трек Last.fm", doc_en="show current Last.fm track")
     async def nowplay(self, event) -> None:
         username = str(self.config.get("username") or "").strip()
         if not username:
-            await utils.answer(event, self.strings("nick_error"), as_html=True)
+            await utils.answer(event, await self._msg("nick_error", "msg_nick_error"), as_html=True)
             return
         status_text = self.config.get('status_text') or self.strings('uploading')
         status = await event.edit(status_text, parse_mode='html')
@@ -486,7 +704,7 @@ class LastFmMod(ModuleBase):
                 str(self.config.get("api_key") or "").strip(),
             )
             if not track:
-                await utils.answer(status, self.strings("no_track"), as_html=True)
+                await utils.answer(status, await self._msg("no_track", "msg_no_track"), as_html=True)
                 return
 
             name = track.get("name") or "Unknown"
@@ -514,7 +732,23 @@ class LastFmMod(ModuleBase):
             if banner_version not in ("horizontal", "vertical"):
                 banner_version = "horizontal"
 
-            banners = Banners(name, artist, cover_bytes, str(self.config.get("font") or ""))
+            progress = None
+            try:
+                info = await self._fetch_track_info(artist, name, str(self.config.get("api_key") or "").strip())
+                duration_ms = int((info.get("track", {}) or {}).get("duration") or 0)
+                if duration_ms > 0:
+                    progress = min(1.0, max(0.0, 15_000 / duration_ms))
+            except Exception:
+                progress = None
+
+            banners = Banners(
+                name,
+                artist,
+                cover_bytes,
+                str(self.config.get("font") or ""),
+                theme=str(self.config.get("banner_theme") or "default"),
+                progress=progress,
+            )
             file = await asyncio.to_thread(getattr(banners, banner_version))
 
             await status.edit(caption, file=file, parse_mode='html')
@@ -522,7 +756,137 @@ class LastFmMod(ModuleBase):
             self.log.error(f"Failed to build Last.fm banner: {e}")
             await utils.answer(
                 status,
-                self.strings("api_error", error=utils.escape_html(str(e))),
+                await self._msg(
+                    "api_error",
+                    "msg_api_error",
+                    {"error": self._escape(e)},
+                    error=self._escape(e),
+                ),
                 as_html=True,
             )
+
+    @command("lfmprofile", alias=["lfmp"], doc_ru="профиль Last.fm", doc_en="Last.fm profile")
+    async def lfmprofile(self, event) -> None:
+        username = utils.get_args_raw(event) or str(self.config.get("username") or "").strip()
+        if not username:
+            await utils.answer(event, await self._msg("nick_error", "msg_nick_error"), as_html=True)
+            return
+        try:
+            data = await self._fetch_profile(username, str(self.config.get("api_key") or "").strip())
+            user = data.get("user") or {}
+            payload = {
+                "lastfm_username": self._escape(user.get("name") or username),
+                "lastfm_playcount": self._escape(user.get("playcount") or "0"),
+                "lastfm_country": self._escape(user.get("country") or "Unknown"),
+                "lastfm_registered": self._escape((user.get("registered") or {}).get("#text") or "Unknown"),
+                "lastfm_profile_url": self._escape(user.get("url") or ""),
+            }
+            template = str(self.config.get("profile_text") or "")
+            text = await self._render_template(template, payload)
+            await utils.answer(event, text, as_html=True)
+        except Exception as e:
+            await utils.answer(
+                event,
+                await self._msg("api_error", "msg_api_error", {"error": self._escape(e)}, error=self._escape(e)),
+                as_html=True,
+            )
+
+    @command("lyrics", doc_ru="текст текущего трека", doc_en="lyrics of current track")
+    async def lyrics(self, event) -> None:
+        username = str(self.config.get("username") or "").strip()
+        if not username:
+            await utils.answer(event, await self._msg("nick_error", "msg_nick_error"), as_html=True)
+            return
+        try:
+            track = await self._fetch_now_playing(username, str(self.config.get("api_key") or "").strip())
+            if not track:
+                await utils.answer(event, await self._msg("no_track", "msg_no_track"), as_html=True)
+                return
+            name = track.get("name") or "Unknown"
+            artist = track.get("artist", {}).get("#text") or "Unknown"
+            lyrics_data = await self._lyrics_from_lrclib(artist, name)
+            if not lyrics_data:
+                await utils.answer(event, self.strings("no_lyrics"), as_html=True)
+                return
+            text = lyrics_data["lyrics"]
+            payload = {
+                "lastfm_song_artist": self._escape(artist),
+                "lastfm_song_name": self._escape(name),
+                "lyrics": self._escape(text),
+            }
+            out = await self._render_template(str(self.config.get("lyrics_text") or ""), payload)
+            await utils.answer(event, out, as_html=True)
+        except Exception as e:
+            await utils.answer(
+                event,
+                await self._msg("api_error", "msg_api_error", {"error": self._escape(e)}, error=self._escape(e)),
+                as_html=True,
+            )
+
+    async def _rlyrics_loop(self) -> None:
+        while self._rlyrics_data.get("active"):
+            try:
+                lyrics_data = self._rlyrics_data.get("lyrics_data") or []
+                started = float(self._rlyrics_data.get("started", time.monotonic()))
+                progress_ms = int((time.monotonic() - started) * 1000)
+                idx = self._current_line_index(lyrics_data, progress_ms)
+                if idx != self._rlyrics_data.get("last_index"):
+                    self._rlyrics_data["last_index"] = idx
+                    payload = dict(self._rlyrics_data.get("payload") or {})
+                    payload["lyrics"] = self._format_realtime_lyrics(lyrics_data, idx)
+                    txt = await self._render_template(str(self.config.get("rlyrics_text") or ""), payload)
+                    msg = self._rlyrics_data.get("message")
+                    if msg:
+                        await msg.edit(txt, parse_mode="html")
+            except Exception as e:
+                self.log.error(f"rlyrics loop error: {e}")
+            await asyncio.sleep(2)
+
+    @command("rlyrics", doc_ru="текст в реальном времени", doc_en="real-time lyrics")
+    async def rlyrics(self, event) -> None:
+        username = str(self.config.get("username") or "").strip()
+        if not username:
+            await utils.answer(event, await self._msg("nick_error", "msg_nick_error"), as_html=True)
+            return
+        try:
+            track = await self._fetch_now_playing(username, str(self.config.get("api_key") or "").strip())
+            if not track:
+                await utils.answer(event, await self._msg("no_track", "msg_no_track"), as_html=True)
+                return
+            name = track.get("name") or "Unknown"
+            artist = track.get("artist", {}).get("#text") or "Unknown"
+            lyrics_data = await self._lyrics_from_lrclib(artist, name)
+            if not lyrics_data or lyrics_data.get("type") != "synced":
+                await utils.answer(event, self.strings("no_lyrics"), as_html=True)
+                return
+            parsed = self._parse_synced_lyrics(lyrics_data.get("lyrics") or "")
+            if not parsed:
+                await utils.answer(event, self.strings("no_lyrics"), as_html=True)
+                return
+            if self._rlyrics_data.get("active"):
+                self._rlyrics_data["active"] = False
+            payload = {
+                "lastfm_song_artist": self._escape(artist),
+                "lastfm_song_name": self._escape(name),
+            }
+            self._rlyrics_data = {
+                "active": True,
+                "message": await event.edit("<i>Starting live lyrics...</i>", parse_mode="html"),
+                "lyrics_data": parsed,
+                "started": time.monotonic(),
+                "last_index": -1,
+                "payload": payload,
+            }
+            asyncio.create_task(self._rlyrics_loop())
+        except Exception as e:
+            await utils.answer(
+                event,
+                await self._msg("api_error", "msg_api_error", {"error": self._escape(e)}, error=self._escape(e)),
+                as_html=True,
+            )
+
+    @command("stoplyrics", doc_ru="остановить real-time lyrics", doc_en="stop real-time lyrics")
+    async def stoplyrics(self, event) -> None:
+        self._rlyrics_data["active"] = False
+        await utils.answer(event, "<b>⏹ Live lyrics stopped</b>", as_html=True)
 # мкуб ратко
