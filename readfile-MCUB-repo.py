@@ -1,55 +1,69 @@
-# meta developer: @CoderHoly
-# version: 1.7.1
-# description: Модуль для чтения и анализа файлов Python
-import os
-import json
-import httpx
-import re
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Шмэлька | @hairpin01
+
 import base64
-import zlib
-import logging
 import hashlib
-import tempfile
 import html
-from telethon import Button
+import json
+import logging
+import os
+import re
+import tempfile
+import zlib
+
+import httpx
+from core.lib.loader.module_base import ModuleBase, callback, command
+from core.lib.loader.module_config import Choice, ConfigValue, ModuleConfig, Secret, String
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-__version__ = (1, 7, 1)
 
-def register(kernel):
-    client = kernel.client
 
-    chunks = []
-    file_info = {}
-    file_content = ""
-    file_path = ""
-    desc_cache = {}
-    analyzed_count = 0
-    current_message_id = None
-    current_chat_id = None
+class ReadFileMCUBRepo(ModuleBase):
+    name = "readfile-MCUB-repo"
+    version = "1.7.2"
+    author = "@CoderHoly"
+    description = "Модуль для чтения и анализа файлов Python"
+    strings = {"name": "ReadFileMod"}
 
-    async_cmd_re = re.compile(r'async\s+def\s+(\w+cmd)\s*\(')
-    sync_cmd_re = re.compile(r'def\s+(\w+cmd)\s*\(')
+    config = ModuleConfig(
+        ConfigValue(
+            "provider",
+            "OpenRouter",
+            description="AI provider for code analysis",
+            validator=Choice(choices=["OpenRouter"], default="OpenRouter"),
+        ),
+        ConfigValue(
+            "model",
+            "kwaipilot/kat-coder-pro:free",
+            description="OpenRouter model for AI analysis",
+            validator=String(default="kwaipilot/kat-coder-pro:free"),
+        ),
+        ConfigValue(
+            "api_key",
+            "",
+            description="OpenRouter API key",
+            validator=Secret(default=""),
+        ),
+    )
 
+    async_cmd_re = re.compile(r"async\s+def\s+(\w+cmd)\s*\(")
+    sync_cmd_re = re.compile(r"def\s+(\w+cmd)\s*\(")
     loader_cmd_re = re.compile(
         r'@loader\.command\s*\((?:[^)]*?ru_doc\s*=\s*["\']([^"\']+)["\'])?[^)]*?\)\s*async\s+def\s+(\w+)\s*\(',
-        re.DOTALL | re.IGNORECASE
+        re.DOTALL | re.IGNORECASE,
     )
-
     class_name_re = re.compile(
-        r'class\s+(\w+)\s*\(\s*(?:loader\.)?Module\s*\)', re.IGNORECASE
+        r"class\s+(\w+)\s*\(\s*(?:loader\.)?Module\s*\)", re.IGNORECASE
     )
-
     strings_name_re = re.compile(
         r'strings\s*=\s*\{.*?["\']name["\']\s*:\s*["\']([^"\']+)["\']',
-        re.DOTALL | re.IGNORECASE
+        re.DOTALL | re.IGNORECASE,
     )
-
     b64_zlib_re = re.compile(r"b'([A-Za-z0-9+/=]+)'")
-
+    ignored_cmds = {"myname", "cmd", "func", "wrapper", "main"}
     raw_patterns = [
         (r"DeleteAccountRequest", "Попытка удаления аккаунта", "critical"),
         (r"ResetAuthorizationRequest", "Сброс всех сеансов авторизации", "critical"),
@@ -63,168 +77,140 @@ def register(kernel):
         (r"subprocess\.Popen|subprocess\.call", "Запуск внешних процессов", "critical"),
         (r"socket\.socket", "Создание сокетов", "critical"),
         (r"shutil\.rmtree", "Рекурсивное удаление файлов", "warning"),
-        (r"(requests|httpx|aiohttp)\.post", "Отправка данных POST-запросами", "warning"),
-        (r"GetHistoryRequest|GetMessagesRequest", "Массовое чтение переписок", "warning"),
+        ((r"(requests|httpx|aiohttp)\.post"), "Отправка данных POST-запросами", "warning"),
+        ((r"GetHistoryRequest|GetMessagesRequest"), "Массовое чтение переписок", "warning"),
         (r"ctypes\.CDLL", "Загрузка нативных библиотек", "critical"),
     ]
-    patterns = [
-        (re.compile(p, re.IGNORECASE), msg, sev) for p, msg, sev in raw_patterns
-    ]
+    patterns = [(re.compile(p, re.IGNORECASE), msg, sev) for p, msg, sev in raw_patterns]
 
-    ignored_cmds = {"myname", "cmd", "func", "wrapper", "main"}
+    async def on_load(self) -> None:
+        await super().on_load()
+        self.chunks = []
+        self.file_info = {}
+        self.file_content = ""
+        self.file_path = ""
+        self.desc_cache = {}
+        self.analyzed_count = 0
+        self.current_message_id = None
+        self.current_chat_id = None
+        self.http_client = None
+        self.cache_dir = os.path.join(tempfile.gettempdir(), "readfilemod_cache")
+        os.makedirs(self.cache_dir, exist_ok=True)
+        self.kernel.store_module_config_schema(self.name, self.config)
+        clean = {k: v for k, v in self.config.to_dict().items() if v is not None}
+        if clean:
+            await self.kernel.save_module_config(self.name, clean)
 
-    http_client = None
+    async def on_unload(self) -> None:
+        await self.cleanup()
+        await super().on_unload()
 
-    cache_dir = os.path.join(tempfile.gettempdir(), "readfilemod_cache")
-    os.makedirs(cache_dir, exist_ok=True)
+    def content_hash(self, content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    module_config = {
-        'provider': 'OpenRouter',
-        'model': 'kwaipilot/kat-coder-pro:free',
-        'api_key': None
-    }
+    def cache_path_for_hash(self, digest: str) -> str:
+        return os.path.join(self.cache_dir, f"{digest}.json")
 
-    async def load_config():
-        nonlocal module_config
-        saved_config = await kernel.get_module_config(__name__, module_config)
-        module_config.update(saved_config)
-
-    def content_hash(content: str) -> str:
-        h = hashlib.sha256()
-        h.update(content.encode("utf-8"))
-        return h.hexdigest()
-
-    def cache_path_for_hash(h: str) -> str:
-        return os.path.join(cache_dir, f"{h}.json")
-
-    def load_ai_cache(h: str) -> str | None:
-        path = cache_path_for_hash(h)
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                return data.get("ai_raw_json")
-            except Exception:
-                return None
-        return None
-
-    def save_ai_cache(h: str, ai_raw_json: str):
-        path = cache_path_for_hash(h)
+    def load_ai_cache(self, digest: str) -> str | None:
+        path = self.cache_path_for_hash(digest)
+        if not os.path.exists(path):
+            return None
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("ai_raw_json")
+        except Exception:
+            return None
+
+    def save_ai_cache(self, digest: str, ai_raw_json: str) -> None:
+        try:
+            with open(self.cache_path_for_hash(digest), "w", encoding="utf-8") as f:
                 json.dump({"ai_raw_json": ai_raw_json}, f, ensure_ascii=False)
         except Exception as e:
             logger.debug(f"Не удалось сохранить кеш: {e}")
 
-    async def get_http_client():
-        nonlocal http_client
-        if http_client is None:
-            http_client = httpx.AsyncClient(timeout=60)
-        return http_client
+    async def get_http_client(self) -> httpx.AsyncClient:
+        if self.http_client is None:
+            self.http_client = httpx.AsyncClient(timeout=60)
+        return self.http_client
 
-    def decode_base64_zlib(encoded_string: str) -> str:
+    def decode_base64_zlib(self, encoded_string: str) -> str:
         try:
             decoded_bytes = base64.b64decode(encoded_string)
-            decompressed_bytes = zlib.decompress(decoded_bytes)
-            return decompressed_bytes.decode("utf-8")
+            return zlib.decompress(decoded_bytes).decode("utf-8")
         except Exception as e:
             logger.debug(f"Ошибка при декодировании base64+zlib: {e}")
-            raise ValueError("Incorrect padding")
+            raise ValueError("Incorrect padding") from e
 
-    def try_decode(code: str) -> tuple[str, bool]:
+    def try_decode(self, code: str) -> tuple[str, bool]:
         if "__import__('zlib')" in code and "__import__('base64')" in code:
-            match = b64_zlib_re.search(code)
+            match = self.b64_zlib_re.search(code)
             if match:
                 try:
-                    encoded_string = match.group(1)
-                    decoded_code = decode_base64_zlib(encoded_string)
+                    decoded_code = self.decode_base64_zlib(match.group(1))
                     logger.info("Код успешно декодирован.")
                     return decoded_code, True
                 except Exception:
                     logger.debug("Не удалось декодировать код — пропускаем.")
-                    return code, False
         return code, False
 
-    def recursive_decode(content: str, depth: int = 0) -> str:
+    def recursive_decode(self, content: str, depth: int = 0) -> str:
         if depth > 5:
             return content
         try:
-            m = b64_zlib_re.search(content)
-            if m:
-                encoded_string = m.group(1)
+            match = self.b64_zlib_re.search(content)
+            if match:
                 try:
-                    decoded_bytes = base64.b64decode(encoded_string)
+                    decoded_bytes = base64.b64decode(match.group(1))
                     try:
-                        res = zlib.decompress(decoded_bytes).decode("utf-8")
+                        result = zlib.decompress(decoded_bytes).decode("utf-8")
                     except zlib.error:
-                        res = decoded_bytes.decode("utf-8", errors="ignore")
-                    return recursive_decode(res, depth + 1)
+                        result = decoded_bytes.decode("utf-8", errors="ignore")
+                    return self.recursive_decode(result, depth + 1)
                 except Exception:
                     return content
             if len(content) > 100 and " " not in content[:50]:
                 try:
-                    res = base64.b64decode(content).decode("utf-8")
-                    return recursive_decode(res, depth + 1)
+                    return self.recursive_decode(base64.b64decode(content).decode("utf-8"), depth + 1)
                 except Exception:
                     pass
         except Exception:
             pass
         return content
 
-    async def generate_description(content: str, json_mode: bool = True) -> str:
-        model = module_config['model']
-        api_key = module_config['api_key']
-
+    async def generate_description(self, content: str, json_mode: bool = True) -> str:
+        model = self.config.get("model") or "kwaipilot/kat-coder-pro:free"
+        api_key = self.config.get("api_key")
         if not api_key:
             return "❌ Ошибка: Не указан API ключ OpenRouter. Пожалуйста, настройте его для полноценного AI-анализа."
 
         if json_mode:
             system_prompt = (
                 "Ты — эксперт по кибербезопасности и анализу Python-кода для Telegram-юзерботов "
-                "(Hikka, Heroku, Telethon). "
-                "Твоя задача — проанализировать код модуля и оценить его с точки зрения безопасности. "
-                "Верни ТОЛЬКО JSON строго в формате:\n"
+                "(Hikka, Heroku, Telethon). Твоя задача — проанализировать код модуля и оценить его "
+                "с точки зрения безопасности. Верни ТОЛЬКО JSON строго в формате:\n"
                 "{\n"
-                '  \"статус\": \"Безопасный модуль ✅\" ИЛИ \"Установка на ваш риск 👀\" ИЛИ \"Опасный модуль 📛\",\n'
-                '  \"назначение\": \"Краткое описание назначения модуля\",\n'
-                '  \"возможности\": [\"Функция 1\", \"Функция 2\"],\n'
-                '  \"опасности\": [\"Опасное действие 1\", \"Опасное действие 2\"]\n'
-                "}\n"
-                "Интерпретация статусов:\n"
-                "• \"Опасный модуль 📛\" — только если модуль явно направлен на кражу аккаунта, кражу сессии, удаление аккаунта, "
-                "массовую утечку данных, скрытый контроль владельца, выполнение произвольного кода или похожие критические действия.\n"
-                "• \"Установка на ваш риск 👀\" — если модуль сам по себе не крадёт аккаунт и не наносит прямой вред владельцу, "
-                "но может привести к блокировке, нарушает правила сервисов, агрессивно спамит, автоматизирует войны/рейды/игровые боты "
-                "или может использоваться во вред другим пользователям.\n"
-                "• \"Безопасный модуль ✅\" — если модуль выполняет полезные или нейтральные функции и не содержит опасных действий.\n"
-                "Поле \"опасности\" обязательно (может быть пустым массивом []). Там перечисляй конкретные риски и возможные "
-                "последствия для владельца аккаунта и других пользователей. Не добавляй никакого текста вокруг JSON."
+                '  "статус": "Безопасный модуль ✅" ИЛИ "Установка на ваш риск 👀" ИЛИ "Опасный модуль 📛",\n'
+                '  "назначение": "Краткое описание назначения модуля",\n'
+                '  "возможности": ["Функция 1", "Функция 2"],\n'
+                '  "опасности": ["Опасное действие 1", "Опасное действие 2"]\n'
+                "}\nНе добавляй никакого текста вокруг JSON."
             )
         else:
-            system_prompt = (
-                "Ты — помощник по описанию команд в Python-коде. "
-                "Отвечай очень кратко, по-русски, без лишнего текста."
-            )
-
-        safe_content = content[:40000]
-        user_content = f"Код для анализа:\n\n```python\n{safe_content}\n```"
+            system_prompt = "Ты — помощник по описанию команд в Python-коде. Отвечай очень кратко, по-русски, без лишнего текста."
 
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": f"Код для анализа:\n\n```python\n{content[:40000]}\n```"},
             ],
         }
-
         try:
-            client = await get_http_client()
+            client = await self.get_http_client()
             response = await client.post(
                 OPENROUTER_API_URL,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
                 json=payload,
             )
             response.raise_for_status()
@@ -234,375 +220,250 @@ def register(kernel):
             logger.debug(f"API error: {e}")
             return f"❌ Ошибка API: {e}"
 
-    async def describe_command(cmd: str, code: str) -> str:
-        if cmd in desc_cache:
-            return desc_cache[cmd]
-
-        prompt = (
-            f"Кратко и по-русски опиши, что делает команда «{cmd}» в этом коде. "
-            f"Не более 10 слов. Только суть."
-        )
+    async def describe_command(self, cmd: str, code: str) -> str:
+        if cmd in self.desc_cache:
+            return self.desc_cache[cmd]
         try:
-            response = await generate_description(prompt + "\n\n" + code, json_mode=False)
+            response = await self.generate_description(
+                f"Кратко и по-русски опиши, что делает команда «{cmd}» в этом коде. Не более 10 слов. Только суть.\n\n{code}",
+                json_mode=False,
+            )
             if not response.startswith("❌"):
-                res = response.strip('." \n`')
-                desc_cache[cmd] = res
-                return res
+                result = response.strip('." \n`')
+                self.desc_cache[cmd] = result
+                return result
         except Exception:
             pass
         return "выполняет команду"
 
-    def analyze_file_for_safety(content: str) -> tuple:
-        decoded_content, is_decoded = try_decode(content)
+    def analyze_file_for_safety(self, content: str) -> tuple[list[str], list[str], list[str], str]:
+        decoded_content, is_decoded = self.try_decode(content)
         if not is_decoded:
-            decoded_content = recursive_decode(content)
+            decoded_content = self.recursive_decode(content)
             is_decoded = decoded_content != content
 
-        critical = []
-        warnings = []
-        suspicious = []
-
+        critical, warnings, suspicious = [], [], []
         if is_decoded:
             suspicious.append("Код был деобфусцирован (распакован) для анализа")
-
-        for cre, msg, sev in patterns:
-            if cre.search(decoded_content):
-                if sev == "critical":
-                    critical.append(msg)
-                else:
-                    warnings.append(msg)
-
+        for compiled, msg, sev in self.patterns:
+            if compiled.search(decoded_content):
+                (critical if sev == "critical" else warnings).append(msg)
         if "eval(" in decoded_content or "exec(" in decoded_content:
             suspicious.append("Использование eval/exec (динамическое исполнение кода)")
-
         if "meta developer:" not in decoded_content:
             suspicious.append("Отсутствует meta developer (автор модуля не указан)")
-
         if "api_id" in decoded_content and "api_hash" in decoded_content:
             suspicious.append("Обнаружены api_id/api_hash в коде")
-
         return critical, warnings, suspicious, decoded_content
 
+    @staticmethod
     def format_size(size: int) -> str:
         if size >= 1024 * 1024:
             return f"{size / (1024 * 1024):.1f} мб"
-        elif size >= 1024:
+        if size >= 1024:
             return f"{int(size / 1024)} кб"
-        else:
-            return f"{size} байт"
+        return f"{size} байт"
 
-    def get_cache_stats() -> tuple[int, int]:
-        total_bytes = 0
-        total_files = 0
-
-        if os.path.isdir(cache_dir):
-            for root, dirs, files in os.walk(cache_dir):
-                for f in files:
-                    path = os.path.join(root, f)
+    def get_cache_stats(self) -> tuple[int, int]:
+        total_bytes = total_files = 0
+        if os.path.isdir(self.cache_dir):
+            for root, _, files in os.walk(self.cache_dir):
+                for name in files:
                     try:
-                        total_bytes += os.path.getsize(path)
+                        total_bytes += os.path.getsize(os.path.join(root, name))
                         total_files += 1
                     except OSError:
                         pass
-
-        if file_path and os.path.exists(file_path):
+        if self.file_path and os.path.exists(self.file_path):
             try:
-                total_bytes += os.path.getsize(file_path)
+                total_bytes += os.path.getsize(self.file_path)
                 total_files += 1
             except OSError:
                 pass
-
         return total_bytes, total_files
 
-    def split_text(text, size):
-        return [text[i: i + size] for i in range(0, len(text), size)]
+    @staticmethod
+    def split_text(text: str, size: int) -> list[str]:
+        return [text[i : i + size] for i in range(0, len(text), size)]
 
-    async def show_page(call, index):
-        nonlocal chunks, current_message_id, current_chat_id
-
-        if not chunks:
+    async def show_page(self, call, index: int) -> None:
+        if not self.chunks:
             await call.edit(
                 "❌ Файл пуст.",
-                buttons=[[Button.inline("↩️ Закрыть", b"rf_close")]]
+                buttons=[[self.Button.inline("↩️ Закрыть", self.close_callback, ttl=0)]],
             )
             return
-
-        total = len(chunks)
+        total = len(self.chunks)
         index = max(0, min(index, total - 1))
-
-        text = (
-            f"📒 Страница {index + 1}/{total}\n"
-            f"<pre>{html.escape(chunks[index])}</pre>"
-        )
-
+        text = f"📒 Страница {index + 1}/{total}\n<pre>{html.escape(self.chunks[index])}</pre>"
         buttons = [
             [
-                Button.inline("⬅️", f"rf_page_{max(0, index - 1)}".encode()),
-                Button.inline("➡️", f"rf_page_{min(total - 1, index + 1)}".encode())
+                self.Button.inline(
+                    "⬅️",
+                    self.page_callback,
+                    ttl=0,
+                    kwargs={"page_num": max(0, index - 1)},
+                ),
+                self.Button.inline(
+                    "➡️",
+                    self.page_callback,
+                    ttl=0,
+                    kwargs={"page_num": min(total - 1, index + 1)},
+                ),
             ],
-            [Button.inline("🕵️ Анализ", f"rf_info_{index}".encode())]
+            [
+                self.Button.inline(
+                    "🕵️ Анализ",
+                    self.info_callback,
+                    ttl=0,
+                    kwargs={"return_index": index},
+                )
+            ],
         ]
+        await call.edit(text, buttons=buttons, parse_mode="html")
 
-        await call.edit(text, buttons=buttons, parse_mode='html')
-
-    async def send_open_form(event, file_name, file_size):
-        nonlocal current_message_id, current_chat_id
-
-        size_str = format_size(file_size)
-
+    async def send_open_form(self, event, file_name: str, file_size: int) -> bool:
         text = (
-            f"📁 <b>Файл загружен</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
+            "📁 <b>Файл загружен</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             f"<b>Имя:</b> {html.escape(file_name)}\n"
-            f"<b>Размер:</b> {size_str}\n"
+            f"<b>Размер:</b> {self.format_size(file_size)}\n"
         )
-
-        buttons = [
-            {"text": "📖 Открыть файл", "type": "callback", "data": "rf_open_file"}
-            ]
-
-        success, message = await kernel.inline_form(
-            event.chat_id,
-            text,
-            buttons=buttons
-        )
-
+        buttons = [[self.Button.inline("📖 Открыть файл", self.open_file_callback, ttl=0)]]
+        success, message = await self.kernel.inline_form(event.chat_id, text, buttons=buttons)
         if success:
-            current_message_id = message.id
-            current_chat_id = message.peer_id
+            self.current_message_id = message.id
+            self.current_chat_id = message.peer_id
             await event.delete()
-
         return success
 
-    @kernel.register.command('rf')
-    async def rf_handler(event):
-        nonlocal chunks, file_info, file_content, file_path, analyzed_count, current_message_id, current_chat_id
-
+    @command("rf", doc={"ru": "Прочитать и проанализировать Python-файл", "en": "Read and analyze a Python file"})
+    async def rf_handler(self, event) -> None:
         reply = await event.get_reply_message()
         if not reply or not reply.file:
             await event.edit("❌ Ответьте на файл.")
             return
-
         await event.edit("⏳ Чтение файла...")
-
-        if file_path and os.path.exists(file_path):
+        if self.file_path and os.path.exists(self.file_path):
             try:
-                os.remove(file_path)
+                os.remove(self.file_path)
             except Exception:
                 pass
-
-        file_path = await reply.download_media()
-        chunks = []
-        file_content = ""
-        file_info = {}
-
+        self.file_path = await reply.download_media()
+        self.chunks = []
+        self.file_content = ""
+        self.file_info = {}
         try:
-            if os.path.getsize(file_path) > 10 * 1024 * 1024:
+            if os.path.getsize(self.file_path) > 10 * 1024 * 1024:
                 await event.edit("❌ Файл слишком большой.")
                 return
-
-            with open(file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                self.file_content = f.read()
         except Exception as e:
             await event.edit(f"❌ Ошибка чтения: {e}")
             return
-
-        chunks = split_text(file_content, 1500)
-        file_info = {
-            "Имя": os.path.basename(file_path),
-            "Размер": os.path.getsize(file_path),
-            "Страниц": len(chunks),
-            "Путь": file_path,
+        self.chunks = self.split_text(self.file_content, 1500)
+        self.file_info = {
+            "Имя": os.path.basename(self.file_path),
+            "Размер": os.path.getsize(self.file_path),
+            "Страниц": len(self.chunks),
+            "Путь": self.file_path,
         }
-        analyzed_count += 1
-
-        success = await send_open_form(event, file_info["Имя"], file_info["Размер"])
-        if not success:
+        self.analyzed_count += 1
+        if not await self.send_open_form(event, self.file_info["Имя"], self.file_info["Размер"]):
             await event.edit("❌ Ошибка создания формы")
-            return
 
-    @kernel.register.command('rfcache')
-    async def rfcache_handler(event):
-        total_bytes, total_files = get_cache_stats()
-        size_str = format_size(total_bytes)
-
+    @command("rfcache", doc={"ru": "Показать и очистить кеш ReadFileMod", "en": "Show and clear ReadFileMod cache"})
+    async def rfcache_handler(self, event) -> None:
+        total_bytes, total_files = self.get_cache_stats()
         text = (
             "📊 <b>Статистика кеша ReadFileMod</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"<b>Занятое место временной папки:</b> {size_str}\n"
+            f"<b>Занятое место временной папки:</b> {self.format_size(total_bytes)}\n"
             f"<b>Файлов во временной папке:</b> {total_files}\n"
-            f"<b>Проанализированных модулей:</b> {analyzed_count}\n"
+            f"<b>Проанализированных модулей:</b> {self.analyzed_count}\n"
         )
-
-        success, message = await kernel.inline_form(
+        success, _ = await self.kernel.inline_form(
             event.chat_id,
             text,
-            buttons=[[{"text": "Очистить 🚮", "type": "callback", "data": "rf_clear_cache"}]]
+            buttons=[[self.Button.inline("Очистить 🚮", self.clear_cache_callback, ttl=0)]],
         )
         if success:
             await event.delete()
 
-    @kernel.register.command('rfconfig')
-    async def rfconfig_handler(event):
-        args = event.text.split(maxsplit=2)
+    @callback(ttl=0)
+    async def close_callback(self, event) -> None:
+        await event.delete()
 
-        if len(args) < 2:
-            current_model = module_config.get('model', 'Не указана')
-            has_api_key = bool(module_config.get('api_key'))
-            api_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
+    @callback(ttl=0)
+    async def open_file_callback(self, event) -> None:
+        await event.answer("⏳ Открываем файл...", alert=False)
+        await self.show_page(event, 0)
 
-            text = (
-                "⚙️ <b>Конфигурация ReadFileMod</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"<b>Модель AI:</b> {current_model}\n"
-                f"<b>API ключ:</b> {api_status}\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<b>Использование:</b>\n"
-                ".rfconfig key ваш_api_ключ\n"
-                ".rfconfig model имя_модели\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<b>Пример моделей:</b>\n"
-                "• kwaipilot/kat-coder-pro:free\n"
-                "• openai/gpt-4o\n"
-                "• google/gemini-pro\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<a href='https://openrouter.ai/settings/keys'>Получить API ключ</a>"
-            )
+    @callback(ttl=0)
+    async def clear_cache_callback(self, event) -> None:
+        await self.clear_cache(event)
 
-            await event.edit(text, parse_mode='html')
-            return
+    @callback(ttl=0)
+    async def page_callback(self, event, page_num: int = 0) -> None:
+        await self.show_page(event, page_num)
 
-        config_type = args[1].lower()
+    @callback(ttl=0)
+    async def info_callback(self, event, return_index: int = 0) -> None:
+        await self.show_info(event, return_index)
 
-        if config_type == 'key':
-            if len(args) < 3:
-                await event.edit("❌ Укажите API ключ")
-                return
-
-            module_config['api_key'] = args[2]
-            await kernel.save_module_config(__name__, module_config)
-            await event.edit("✅ API ключ сохранен")
-
-        elif config_type == 'model':
-            if len(args) < 3:
-                await event.edit("❌ Укажите название модели")
-                return
-
-            module_config['model'] = args[2]
-            await kernel.save_module_config(__name__, module_config)
-            await event.edit(f"✅ Модель изменена на: {args[2]}")
-
-        else:
-            await event.edit("❌ Неизвестный тип конфигурации. Используйте 'key' или 'model'")
-
-    async def handle_callback(event):
-        data = event.data.decode('utf-8') if isinstance(event.data, bytes) else str(event.data)
-
-        if data == "rf_close":
-            await event.delete()
-            return
-
-        elif data == "rf_open_file":
-            await event.answer("⏳ Открываем файл...", alert=False)
-            await show_page(event, 0)
-            return
-
-        elif data == "rf_clear_cache":
-            await event.answer("⏳ Очистка кеша...", alert=False)
-
-            removed_files = 0
-            removed_cache = 0
-
-            nonlocal file_path, chunks, desc_cache, analyzed_count
-
-            if file_path and os.path.exists(file_path):
+    async def clear_cache(self, event) -> None:
+        await event.answer("⏳ Очистка кеша...", alert=False)
+        removed_files = removed_cache = 0
+        if self.file_path and os.path.exists(self.file_path):
+            try:
+                os.remove(self.file_path)
+                removed_files += 1
+            except Exception:
+                pass
+        self.file_path = ""
+        self.chunks = []
+        self.file_content = ""
+        self.file_info = {}
+        if os.path.isdir(self.cache_dir):
+            for filename in os.listdir(self.cache_dir):
+                path = os.path.join(self.cache_dir, filename)
+                if not os.path.isfile(path):
+                    continue
                 try:
-                    os.remove(file_path)
-                    removed_files += 1
+                    os.remove(path)
+                    removed_cache += 1
                 except Exception:
                     pass
+        self.desc_cache.clear()
+        self.analyzed_count = 0
+        await event.edit(
+            "🧹 <b>Кеш и временные файлы очищены!</b>\n"
+            f"• Удалено временных файлов: {removed_files}\n"
+            f"• Удалено файлов кеша: {removed_cache}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Можно продолжать анализ новых модулей 🙂",
+            parse_mode="html",
+        )
 
-            file_path = ""
-            chunks = []
-
-            if os.path.isdir(cache_dir):
-                for filename in os.listdir(cache_dir):
-                    path = os.path.join(cache_dir, filename)
-                    try:
-                        os.remove(path)
-                        removed_cache += 1
-                    except Exception:
-                        pass
-
-            desc_cache.clear()
-            analyzed_count = 0
-
-            await event.edit(
-                "🧹 <b>Кеш и временные файлы очищены!</b>\n"
-                f"• Удалено временных файлов: {removed_files}\n"
-                f"• Удалено файлов кеша: {removed_cache}\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Можно продолжать анализ новых модулей 🙂",
-                parse_mode='html'
-            )
-            return
-
-        elif data.startswith("rf_page_"):
-            try:
-                page_num = int(data.split("_")[2])
-                await show_page(event, page_num)
-            except (IndexError, ValueError):
-                await event.answer("❌ Ошибка номера страницы", alert=True)
-            return
-
-        elif data.startswith("rf_info_"):
-            try:
-                return_index = int(data.split("_")[2])
-                await show_info(event, return_index)
-            except (IndexError, ValueError):
-                await event.answer("❌ Ошибка", alert=True)
-            return
-
-        await event.answer("❌ Неизвестное действие", alert=True)
-
-    async def show_info(event, return_index):
-        nonlocal file_content, file_info
-
-        await event.answer("⏳ Углубленный анализ...", show_alert=False)
-
-        display_name = "N/A"
-        filename = file_info.get("Имя", "N/A")
-
-        class_match = class_name_re.search(file_content)
+    async def show_info(self, event, return_index: int) -> None:
+        await event.answer("⏳ Углубленный анализ...", alert=False)
+        filename = self.file_info.get("Имя", "N/A")
+        class_match = self.class_name_re.search(self.file_content)
+        strings_match = self.strings_name_re.search(self.file_content)
         if class_match:
             display_name = class_match.group(1)
+        elif strings_match:
+            display_name = strings_match.group(1)
         else:
-            strings_match = strings_name_re.search(file_content)
-            if strings_match:
-                display_name = strings_match.group(1)
-            else:
-                clean_name = re.sub(r"\s*\(\d+\)", "", filename)
-                display_name = clean_name
-                if display_name.endswith(".py"):
-                    display_name = display_name[:-3]
+            display_name = re.sub(r"\s*\(\d+\)", "", filename)
+            if display_name.endswith(".py"):
+                display_name = display_name[:-3]
 
-        fsize = int(file_info.get("Размер", 0))
-        pages = file_info.get("Страниц", 0)
-        size_str = format_size(fsize)
-
-        crit_list, warn_list, susp_list, working_content = analyze_file_for_safety(file_content)
-
-        content_hash_value = content_hash(working_content)
-        ai_raw_json = load_ai_cache(content_hash_value)
-        if ai_raw_json is None:
-            ai_raw_json = await generate_description(working_content, json_mode=True)
-            if not ai_raw_json.startswith("❌"):
-                try:
-                    cleaned = re.sub(r"```json\n|```json|```|\n", "", ai_raw_json).strip()
-                    json.loads(cleaned)
-                    save_ai_cache(content_hash_value, ai_raw_json)
-                except Exception:
-                    pass
+        fsize = int(self.file_info.get("Размер", 0))
+        pages = self.file_info.get("Страниц", 0)
+        crit_list, warn_list, susp_list, working_content = self.analyze_file_for_safety(self.file_content)
+        all_heur = crit_list + warn_list + susp_list
 
         ai_data = {
             "статус": "Установка на ваш риск 👀",
@@ -610,128 +471,101 @@ def register(kernel):
             "возможности": [],
             "опасности": [],
         }
-        if ai_raw_json and not ai_raw_json.startswith("❌"):
-            try:
-                cleaned = re.sub(r"```json\n|```json|```|\n", "", ai_raw_json).strip()
-                loaded = json.loads(cleaned)
-                ai_data.update(loaded)
-            except Exception:
-                pass
-
-        status = html.escape(ai_data.get("статус", "Установка на ваш риск 👀"))
-        purpose = html.escape(ai_data.get("назначение", "Нет описания"))
-        general_caps = ai_data.get("возможности", []) or []
-        ai_risks = ai_data.get("опасности", []) or []
-
-        command_lines = []
-        found_cmd_names = set()
-
-        loader_matches = loader_cmd_re.findall(working_content)
-        has_loader_cmds = bool(loader_matches)
-
-        for doc_text, cmd_name in loader_matches:
-            if cmd_name in ignored_cmds:
-                continue
-            found_cmd_names.add(cmd_name)
-            if doc_text:
-                desc = doc_text.replace("\n", " ").strip()
-            else:
-                desc = await describe_command(cmd_name, working_content)
-            formatted_cmd = f"Команда «{html.escape(cmd_name)}» | {html.escape(desc)}"
-            command_lines.append(formatted_cmd)
-
-        if not has_loader_cmds:
-            classic_cmds = async_cmd_re.findall(working_content)
-            if not classic_cmds:
-                classic_cmds = sync_cmd_re.findall(working_content)
-        else:
-            classic_cmds = []
-
-        clean_classic_cmds = []
-        for name in classic_cmds:
-            base = name[:-3] if name.endswith("cmd") else name
-            clean_classic_cmds.append(base)
-
-        for cmd in clean_classic_cmds:
-            if cmd in found_cmd_names or cmd in ignored_cmds:
-                continue
-            desc = await describe_command(cmd, working_content)
-            formatted_cmd = f"Команда «{html.escape(cmd)}» | {html.escape(desc)}"
-            command_lines.append(formatted_cmd)
+        ai_raw_json = None
+        if self.config.get("api_key"):
+            digest = self.content_hash(working_content)
+            ai_raw_json = self.load_ai_cache(digest)
+            if ai_raw_json is None:
+                ai_raw_json = await self.generate_description(working_content, json_mode=True)
+                if not ai_raw_json.startswith("❌"):
+                    try:
+                        json.loads(re.sub(r"```json\n|```json|```|\n", "", ai_raw_json).strip())
+                        self.save_ai_cache(digest, ai_raw_json)
+                    except Exception:
+                        pass
+            if ai_raw_json and not ai_raw_json.startswith("❌"):
+                try:
+                    ai_data.update(json.loads(re.sub(r"```json\n|```json|```|\n", "", ai_raw_json).strip()))
+                except Exception:
+                    pass
 
         text = (
             "📄 <b>Информация о модуле</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"<b>Имя:</b> {html.escape(display_name)}\n"
-            f"<b>Размер:</b> {size_str}\n"
+            f"<b>Размер:</b> {self.format_size(fsize)}\n"
             f"<b>Страниц:</b> {pages}\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
         )
 
-        if not module_config.get("api_key"):
-            text += (
-                "Для AI Анализа\n"
-                "Пожалуйста, настройте Api Key\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-            )
+        command_lines = await self.build_command_lines(working_content)
+        if not self.config.get("api_key"):
+            text += "Для AI Анализа\nПожалуйста, настройте Api Key\n━━━━━━━━━━━━━━━━━━━━\n"
         else:
-            text += (
-                f"🤖 <b>AI-Анализ | {status}</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-            )
-
-            text += "🔹<b>Назначение модуля:</b>\n"
-            text += f"<blockquote>{purpose}</blockquote>\n"
-
+            status = html.escape(str(ai_data.get("статус", "Установка на ваш риск 👀")))
+            purpose = html.escape(str(ai_data.get("назначение", "Нет описания")))
+            general_caps = ai_data.get("возможности", []) or []
+            ai_risks = ai_data.get("опасности", []) or []
+            text += f"🤖 <b>AI-Анализ | {status}</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            text += f"🔹<b>Назначение модуля:</b>\n<blockquote>{purpose}</blockquote>\n"
             if general_caps or command_lines:
+                combined = [f"• {c}" for c in command_lines]
+                combined.extend(f"• {html.escape(str(c))}" for c in general_caps)
                 text += "⚙️<b> Возможности и Команды:</b>\n"
-                combined_list = [f"• {c}" for c in command_lines]
-                combined_list.extend([f"• {html.escape(c)}" for c in general_caps])
-                cmds_str = "\n".join(combined_list)
-                text += f"<blockquote>{cmds_str}</blockquote>\n"
-
+                text += f"<blockquote>{'\n'.join(combined)}</blockquote>\n"
             if ai_risks:
-                dangers_str = "\n".join([f"• {html.escape(d)}" for d in ai_risks])
+                dangers = "\n".join(f"• {html.escape(str(d))}" for d in ai_risks)
                 text += "☢️ <b>Опасные или рискованные действия:</b>\n"
-                text += f"<blockquote>{dangers_str}</blockquote>\n"
+                text += f"<blockquote>{dangers}</blockquote>\n"
 
-            all_heur = crit_list + warn_list + susp_list
         if all_heur:
-            heur_str = "\n".join([f"• {html.escape(d)}" for d in all_heur])
+            heur = "\n".join(f"• {html.escape(str(d))}" for d in all_heur)
             text += "🧪 <b>Статический анализ (эвристика):</b>\n"
-            text += f"<blockquote>{heur_str}</blockquote>"
-
-
-        buttons = [[Button.inline("↩️ Назад к коду", f"rf_page_{return_index}".encode())]]
+            text += f"<blockquote>{heur}</blockquote>"
 
         await event.edit(
             text=text,
-            buttons=buttons,
-            parse_mode='html'
+            buttons=[[
+                self.Button.inline(
+                    "↩️ Назад к коду",
+                    self.page_callback,
+                    ttl=0,
+                    kwargs={"page_num": return_index},
+                )
+            ]],
+            parse_mode="html",
         )
 
-    kernel.register_callback_handler("rf_", handle_callback)
+    async def build_command_lines(self, working_content: str) -> list[str]:
+        command_lines = []
+        found_cmd_names = set()
+        loader_matches = self.loader_cmd_re.findall(working_content)
+        for doc_text, cmd_name in loader_matches:
+            if cmd_name in self.ignored_cmds:
+                continue
+            found_cmd_names.add(cmd_name)
+            desc = doc_text.replace("\n", " ").strip() if doc_text else await self.describe_command(cmd_name, working_content)
+            command_lines.append(f"Команда «{html.escape(cmd_name)}» | {html.escape(desc)}")
 
-    async def cleanup():
-        nonlocal file_path, http_client
+        classic_cmds = [] if loader_matches else self.async_cmd_re.findall(working_content) or self.sync_cmd_re.findall(working_content)
+        for name in classic_cmds:
+            cmd = name[:-3] if name.endswith("cmd") else name
+            if cmd in found_cmd_names or cmd in self.ignored_cmds:
+                continue
+            desc = await self.describe_command(cmd, working_content)
+            command_lines.append(f"Команда «{html.escape(cmd)}» | {html.escape(desc)}")
+        return command_lines
 
-        if file_path and os.path.exists(file_path):
+    async def cleanup(self) -> None:
+        if self.file_path and os.path.exists(self.file_path):
             try:
-                os.remove(file_path)
+                os.remove(self.file_path)
             except Exception:
                 pass
-
-        if http_client:
+        self.file_path = ""
+        if self.http_client:
             try:
-                await http_client.aclose()
+                await self.http_client.aclose()
             except Exception:
                 pass
-
-    #load_config()
-
-    return {
-        'rf': rf_handler,
-        'rfcache': rfcache_handler,
-        'rfconfig': rfconfig_handler,
-        'cleanup': cleanup
-    }
+            self.http_client = None
