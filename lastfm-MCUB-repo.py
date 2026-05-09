@@ -26,7 +26,7 @@ import requests
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 import utils
-from core.lib.loader.module_base import ModuleBase, command
+from core.lib.loader.module_base import ModuleBase, callback, command
 from core.lib.loader.module_config import (
     Choice,
     ConfigValue,
@@ -337,6 +337,12 @@ class LastFmMod(ModuleBase):
             validator=String(default=""),
         ),
         ConfigValue(
+            "rlyrics_current_emoji",
+            "▶️",
+            description="HTML emoji/prefix for current real-time lyrics line",
+            validator=String(default="▶️"),
+        ),
+        ConfigValue(
             "font",
             "https://raw.githubusercontent.com/kamekuro/assets/master/fonts/Onest-Bold.ttf",
             description="Custom font URL (ttf)",
@@ -401,6 +407,7 @@ class LastFmMod(ModuleBase):
             ),
             "lyrics_text": "<b>📜 {lastfm_song_artist} — {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
             "rlyrics_text": "<b>🎵 Live lyrics:</b> {lastfm_song_artist} — {lastfm_song_name}\n\n{lyrics}",
+            "rlyrics_current_emoji": "▶️",
             "banner_theme": "default",
             "lrclib_enabled": "true",
         }
@@ -411,6 +418,7 @@ class LastFmMod(ModuleBase):
         self.kernel.store_module_config_schema(self.name, self.config)
         await self.kernel.save_module_config(self.name, self.config.to_dict())
         self._rlyrics_data: dict[str, Any] = {"active": False}
+        self._pending_rlyrics: dict[str, Any] | None = None
 
     async def on_unload(self) -> None:
         utils.unregister_scope(self.name)
@@ -539,17 +547,17 @@ class LastFmMod(ModuleBase):
             )
         return parsed
 
-    @staticmethod
-    def _format_realtime_lyrics(lyrics_data: list[dict[str, Any]], current_index: int) -> str:
+    def _format_realtime_lyrics(self, lyrics_data: list[dict[str, Any]], current_index: int) -> str:
         if not lyrics_data or current_index < 0:
             return "<i>Waiting for sync...</i>"
         out: list[str] = []
+        current_emoji = str(self.config.get("rlyrics_current_emoji") or "▶️")
         start = max(0, current_index - 2)
         end = min(len(lyrics_data), current_index + 3)
         for i in range(start, end):
-            txt = LastFmMod._escape(lyrics_data[i]["text"])
+            txt = self._escape(lyrics_data[i]["text"])
             if i == current_index:
-                out.append(f"<b>▶ {txt}</b>")
+                out.append(f"<b>{current_emoji} {txt}</b>")
             elif i < current_index:
                 out.append(f"<i>{txt}</i>")
             else:
@@ -565,6 +573,51 @@ class LastFmMod(ModuleBase):
             else:
                 break
         return idx
+
+    def _cancel_buttons(self, cancel_callback: Any | None) -> list[list[Any]] | None:
+        if not cancel_callback:
+            return None
+        return [[self.Button.inline("⏹️ Отмена", cancel_callback)]]
+
+    async def _edit_live_message(self, data: dict[str, Any], text: str) -> None:
+        buttons = self._cancel_buttons(data.get("cancel_callback"))
+        callback_obj = data.get("callback")
+        if callback_obj is not None and hasattr(callback_obj, "edit"):
+            try:
+                if buttons:
+                    await callback_obj.edit(text, parse_mode="html", buttons=buttons)
+                else:
+                    await callback_obj.edit(text, parse_mode="html")
+                return
+            except TypeError:
+                try:
+                    await callback_obj.edit(text, parse_mode="html")
+                    return
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        msg = data.get("message")
+        if msg is not None and hasattr(msg, "edit"):
+            try:
+                if buttons:
+                    await msg.edit(text, parse_mode="html", buttons=buttons)
+                else:
+                    await msg.edit(text, parse_mode="html")
+                return
+            except TypeError:
+                try:
+                    await msg.edit(text, parse_mode="html")
+                    return
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        await self.client.edit_message(
+            data["chat_id"], data["message_id"], text, parse_mode="html"
+        )
 
     async def _render_template(self, template: str, data: dict[str, Any]) -> str:
         try:
@@ -824,8 +877,40 @@ class LastFmMod(ModuleBase):
             )
 
     async def _rlyrics_loop(self) -> None:
-        while self._rlyrics_data.get("active"):
+        update_count = 0
+        max_updates = 600
+        pause_count = 0
+        last_no_track_message_count = -1
+        while self._rlyrics_data.get("active") and update_count < max_updates:
             try:
+                username = str(self.config.get("username") or "").strip()
+                api_key = str(self.config.get("api_key") or "").strip()
+                if username and api_key:
+                    track = await self._fetch_now_playing(username, api_key)
+                    if not track:
+                        pause_count += 1
+                        if pause_count > 30:
+                            break
+                        if (
+                            last_no_track_message_count == -1
+                            or pause_count - last_no_track_message_count >= 10
+                        ):
+                            await self._edit_live_message(
+                                self._rlyrics_data,
+                                self._rlyrics_data["header"]
+                                + "⏸️ <i>Last.fm больше не показывает текущий трек</i>",
+                            )
+                            last_no_track_message_count = pause_count
+                        await asyncio.sleep(1)
+                        update_count += 1
+                        continue
+
+                    current_key = self._track_key(track)
+                    if current_key and current_key != self._rlyrics_data.get("track_key"):
+                        break
+
+                pause_count = 0
+                last_no_track_message_count = -1
                 lyrics_data = self._rlyrics_data.get("lyrics_data") or []
                 started = float(self._rlyrics_data.get("started", time.monotonic()))
                 progress_ms = int((time.monotonic() - started) * 1000)
@@ -835,12 +920,72 @@ class LastFmMod(ModuleBase):
                     payload = dict(self._rlyrics_data.get("payload") or {})
                     payload["lyrics"] = self._format_realtime_lyrics(lyrics_data, idx)
                     txt = await self._render_template(str(self.config.get("rlyrics_text") or ""), payload)
-                    msg = self._rlyrics_data.get("message")
-                    if msg:
-                        await msg.edit(txt, parse_mode="html")
+                    await self._edit_live_message(self._rlyrics_data, txt)
             except Exception as e:
                 self.log.error(f"rlyrics loop error: {e}")
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
+            update_count += 1
+
+        if self._rlyrics_data.get("active"):
+            try:
+                await self._edit_live_message(
+                    self._rlyrics_data,
+                    self._rlyrics_data.get("header", "")
+                    + "✅ <i>Сеанс синхронизации завершен</i>",
+                )
+            except Exception:
+                pass
+        self._rlyrics_data["active"] = False
+
+    @staticmethod
+    def _track_key(track: dict[str, Any]) -> str:
+        artist = track.get("artist", {}).get("#text") or "Unknown"
+        name = track.get("name") or "Unknown"
+        return f"{artist}\u0000{name}"
+
+    @callback(ttl=60)
+    async def on_click_cancel_rlyrics(self, call: Any, data: Any = None) -> None:
+        self._pending_rlyrics = None
+        if self._rlyrics_data.get("active"):
+            self._rlyrics_data["active"] = False
+        await call.edit("⏹️ <b>Синхронизация текста отменена</b>", parse_mode="html")
+        await call.answer("Отменено")
+
+    @callback(ttl=60)
+    async def on_click_rlyrics(self, call: Any, data: Any = None) -> None:
+        pending = self._pending_rlyrics
+        if not pending:
+            await call.answer("Сессия устарела, запусти команду заново.", alert=True)
+            return
+
+        header = pending["header"]
+        initial_text = header + "🎵 <i>Ожидание синхронизации...</i>"
+        await call.edit(
+            initial_text,
+            parse_mode="html",
+            buttons=self._cancel_buttons(self.on_click_cancel_rlyrics),
+        )
+        await call.answer()
+
+        if self._rlyrics_data.get("active"):
+            self._rlyrics_data["active"] = False
+
+        self._rlyrics_data = {
+            "active": True,
+            "callback": call,
+            "message": pending.get("message"),
+            "message_id": pending["message_id"],
+            "chat_id": pending["chat_id"],
+            "lyrics_data": pending["lyrics_data"],
+            "started": time.monotonic(),
+            "last_index": -1,
+            "payload": pending["payload"],
+            "header": header,
+            "track_key": pending["track_key"],
+            "cancel_callback": self.on_click_cancel_rlyrics,
+        }
+        self._pending_rlyrics = None
+        asyncio.create_task(self._rlyrics_loop())
 
     @command("rlyrics", doc_ru="текст в реальном времени", doc_en="real-time lyrics")
     async def rlyrics(self, event) -> None:
@@ -869,15 +1014,54 @@ class LastFmMod(ModuleBase):
                 "lastfm_song_artist": self._escape(artist),
                 "lastfm_song_name": self._escape(name),
             }
-            self._rlyrics_data = {
-                "active": True,
-                "message": await event.edit("<i>Starting live lyrics...</i>", parse_mode="html"),
+            header = (
+                "📜 <b>Текст в реальном времени</b>\n"
+                f"<b>{self._escape(artist)} — {self._escape(name)}</b>\n\n"
+            )
+            success, msg = await self.inline(
+                event.chat_id,
+                "🕔 <b>Загружаю текст...</b>",
+                buttons=[
+                    [
+                        self.Button.inline("▶️ Запустить", self.on_click_rlyrics),
+                        self.Button.inline("⏹️ Отмена", self.on_click_cancel_rlyrics),
+                    ]
+                ],
+            )
+
+            if not success or not msg:
+                sent_message = await event.edit(
+                    header + "🎵 <i>Ожидание синхронизации...</i>",
+                    parse_mode="html",
+                )
+                self._pending_rlyrics = None
+                self._rlyrics_data = {
+                    "active": True,
+                    "message": sent_message,
+                    "message_id": sent_message.id,
+                    "chat_id": event.chat_id,
+                    "lyrics_data": parsed,
+                    "started": time.monotonic(),
+                    "last_index": -1,
+                    "payload": payload,
+                    "header": header,
+                    "track_key": self._track_key(track),
+                    "cancel_callback": self.on_click_cancel_rlyrics,
+                }
+                asyncio.create_task(self._rlyrics_loop())
+                return
+
+            self._pending_rlyrics = {
+                "message": msg,
+                "message_id": msg.id,
+                "chat_id": event.chat_id,
                 "lyrics_data": parsed,
-                "started": time.monotonic(),
-                "last_index": -1,
                 "payload": payload,
+                "header": header,
+                "track_key": self._track_key(track),
             }
-            asyncio.create_task(self._rlyrics_loop())
+            await msg.click(0)
+            await event.delete()
         except Exception as e:
             await utils.answer(
                 event,
