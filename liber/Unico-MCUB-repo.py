@@ -21,8 +21,8 @@ class Unico(ModuleBase):
     version = "1.0.2"
     author = "@Hairpin00"
     description: dict[str, str] = {
-        "ru": "Кнопка, после нажатия на которую бот отправляет Unico медиа",
-        "en": "Button that makes the bot send Unico media after click",
+        "ru": "BOT команда /unico показывает кнопку, после нажатия на которую бот отправляет Unico медиа",
+        "en": "BOT command /unico shows a button that makes the bot send Unico media after click",
     }
 
     strings = {
