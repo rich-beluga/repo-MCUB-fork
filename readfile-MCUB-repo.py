@@ -24,7 +24,7 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 class ReadFileMCUBRepo(ModuleBase):
     name = "readfile-MCUB-repo"
     version = "1.7.2"
-    author = "@CoderHoly"
+    author = "@CoderHoly & @Hairpin00"
     description = "Модуль для чтения и анализа файлов Python"
     strings = {"name": "ReadFileMod"}
 
