@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "Mcub-commander",
+      "description": "Execute, explain, list, and choose MCUB userbot commands while passing mcub.command arguments without prefixes.",
+      "path": "Mcub-commander/SKILL.md",
+      "keywords": [
+        "команда",
+        "команды",
+        "command",
+        "commands",
+        "mcub.command",
+        "ping",
+        "man",
+        "cfg",
+        "dlm",
+        "префикс"
+      ]
+    },
+    {
+      "name": "MCUB-debugger-fixer",
+      "description": "Run, interpret, and fix MCUB debugger warnings and errors while preserving module behavior and build history.",
+      "path": "MCUB-debugger-fixer/SKILL.md",
+      "keywords": [
+        "debugger",
+        "debug",
+        "дебаггер",
+        "варн",
+        "warning",
+        "warnings",
+        "error",
+        "errors",
+        "MCUB0",
+        "pytest"
+      ]
+    },
+    {
+      "name": "MCUB-modules-creator",
+      "description": "Create and update debug MCUB userbot modules in app-debug using the MCUB module API, class-style modules, and inline form/callback docs.",
+      "path": "MCUB-modules-creator/SKILL.md",
+      "keywords": [
+        "модуль",
+        "модули",
+        "module",
+        "modules",
+        "app-debug",
+        "modules-debug",
+        "ModuleBase",
+        "inline",
+        "callback",
+        "command"
+      ]
+    },
+    {
+      "name": "MCUB-openagent-workflow",
+      "description": "Route OpenAgent MCUB work across repo navigation, debugger fixes, module creation, release workflows, and skill registry management.",
+      "path": "MCUB-openagent-workflow/SKILL.md",
+      "keywords": [
+        "openagent",
+        "skill",
+        "skills",
+        "скилл",
+        "скиллы",
+        "workflow",
+        "агент",
+        "repo",
+        "registry"
+      ]
+    },
+    {
+      "name": "MCUB-release-modules",
+      "description": "Validate, publish, index, commit, and push MCUB modules from debug builds into the MCUB module repository.",
+      "path": "MCUB-release-modules/SKILL.md",
+      "keywords": [
+        "release",
+        "publish",
+        "релиз",
+        "выпусти",
+        "опубликуй",
+        "repo-MCUB-fork",
+        "modules.ini",
+        "commit",
+        "push"
+      ]
+    },
+    {
+      "name": "prompt_ui_styler",
+      "description": "Adjust OpenAgent appearance, answer layout, thinking/status text, emojis, labels, templates, and config UI safely.",
+      "path": "prompt_ui_styler/SKILL.md",
+      "keywords": [
+        "prompt",
+        "ui",
+        "style",
+        "template",
+        "внешний вид",
+        "оформление",
+        "thinking",
+        "emoji",
+        "label",
+        "placeholders"
+      ]
+    }
+  ]
+}
