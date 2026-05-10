@@ -26,7 +26,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 import aiohttp
-from telethon import Button, events
+from telethon import events
 from telethon.tl.functions.account import (
     UpdateProfileRequest,
     UpdateUsernameRequest as UpdateAccountUsernameRequest,
@@ -56,7 +56,7 @@ from telethon.tl.functions.photos import UploadProfilePhotoRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import ChannelParticipantsAdmins, ChatAdminRights
 
-from core.lib.loader.module_base import ModuleBase, command
+from core.lib.loader.module_base import ModuleBase, callback, command
 from core.lib.loader.module_config import (
     Boolean,
     Choice,
@@ -72,7 +72,7 @@ from core.lib.loader.module_config import (
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
-    version = "0.5.1"
+    version = "0.6.5"
     author = "@dev_dolbaeb"
     description = {
         "ru": "ИИ агент в юзерботе с новой архитектурой инструментов",
@@ -166,6 +166,7 @@ class OpenAgent(ModuleBase):
     )
     MCUB_DOCS_URL = "https://x0.at/y2rb.md"
     TOOL_CALL_RE = re.compile(r"<([a-z0-9._]+)([^>]*)>(.*?)</\1>|<([a-z0-9._]+)([^>]*)/?>", re.DOTALL | re.I)
+    TOOL_CALL_JSON_RE = re.compile(r"```tool_call\s*(.*?)```", re.DOTALL | re.I)
     TOOL_REGISTRY = (
         "terminal.run", "terminal.inspect", "terminal.list_files", "terminal.read_file", "terminal.git_status",
         "web.search", "web.fetch_url", "web.read_html", "web.extract_links", "web.summarize_page",
@@ -184,12 +185,14 @@ class OpenAgent(ModuleBase):
         "profile.update_username", "profile.set_photo", "profile.download_photo", "profile.get_photos", "profile.common_chats",
         "contacts.add", "contacts.delete", "contacts.block", "contacts.unblock", "contacts.entity",
         "creation.channel", "creation.group", "creation.bot", "creation.channel_avatar", "creation.private_invite",
-        "skills.list", "skills.read", "skills.import_md", "skills.export_md", "skills.save_from_ai",
+        "skills.list", "skills.read", "skills.import_md", "skills.export_md", "skills.save_from_ai", "skills.install", "skills.repo_list",
         "code.generate_file", "code.generate_mcub_module", "code.choose_filename", "code.attach_result", "code.read_docs",
         "context.remember", "context.clear", "context.regenerate", "context.reply_context", "context.media_context",
+        "thinking.note",
         "account.blacklist", "account.saved_messages", "account.effects", "account.reactions", "account.available_reactions",
         "utility.token_usage", "utility.placeholders", "utility.random_template", "utility.agent_log", "utility.error_file",
     )
+    AGENT_MAX_STEPS = 15
 
     config = ModuleConfig(
         ConfigValue(
@@ -238,9 +241,9 @@ class OpenAgent(ModuleBase):
         ),
         ConfigValue(
             "timeout",
-            90,
-            description="HTTP timeout seconds",
-            validator=Integer(default=90, min=10, max=300),
+            180,
+            description="HTTP timeout seconds for each provider request. Increase for slow reasoning/code tasks.",
+            validator=Integer(default=180, min=10, max=600),
         ),
         ConfigValue(
             "terminal_enabled",
@@ -363,6 +366,30 @@ class OpenAgent(ModuleBase):
             validator=Integer(default=10, min=0, max=50),
         ),
         ConfigValue(
+            "context_compaction_enabled",
+            True,
+            description="Automatically summarize old chat context when it becomes too large",
+            validator=Boolean(default=True),
+        ),
+        ConfigValue(
+            "context_compaction_chars",
+            18000,
+            description="Compact remembered chat context after this many characters",
+            validator=Integer(default=18000, min=2000, max=200000),
+        ),
+        ConfigValue(
+            "context_compaction_keep_turns",
+            2,
+            description="Recent user/assistant turns to keep verbatim after compaction",
+            validator=Integer(default=2, min=0, max=10),
+        ),
+        ConfigValue(
+            "context_compaction_max_tokens",
+            900,
+            description="Maximum tokens used for the compaction summary response",
+            validator=Integer(default=900, min=128, max=4096),
+        ),
+        ConfigValue(
             "tool_memory_enabled",
             False,
             description="Remember concise notes from tool outputs for next requests",
@@ -383,26 +410,70 @@ class OpenAgent(ModuleBase):
         ConfigValue(
             "response_header",
             "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
-            description="Final response header template. Supports placeholders from placeholders field",
+            description="Final response header template. Placeholders: {provider}, {provider_key}, {model}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
             validator=String(default="🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}"),
         ),
         ConfigValue(
             "request_label",
             "<b>📝 Запрос:</b>",
-            description="Request block label template. Supports placeholders from placeholders field",
+            description="Request block label template. Placeholders: {provider}, {provider_key}, {model}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
             validator=String(default="<b>📝 Запрос:</b>"),
         ),
         ConfigValue(
             "response_label",
             "<b>💬 Ответ:</b>",
-            description="Response block label template. Supports placeholders from placeholders field",
+            description="Response block label template. Placeholders: {provider}, {provider_key}, {model}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
             validator=String(default="<b>💬 Ответ:</b>"),
         ),
         ConfigValue(
             "thinking_template",
             "{random}",
-            description="Thinking message template. Supports placeholders from placeholders field",
+            description="Initial loading/thinking message template. Placeholders: {provider}, {provider_key}, {model}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
             validator=String(default="{random}"),
+        ),
+        ConfigValue(
+            "tool_display_template",
+            "<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>",
+            description="Tool execution status template. Raw: {tool}, {title}, {value}, {log}, {step}. Semantic: {round}, {round_total}, {progress_bar}, {progress_percent}, {status_emoji}, {status_icon}, {status_emoji_html}, {status_icon_html}, {status_text}, {tool_group}, {tool_short}, {tool_input}, {tool_input_block}, {thinking_line}, {thinking_block}, {log_lines}, {log_block}, {log_count}, {elapsed_line}, {token_line}, {model_line}, {activity_line}. General: {provider}, {model}, {elapsed}, {thinking}, {random}, {prefix}, {time}, {date}",
+            validator=String(
+                default="<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>"
+            ),
+        ),
+        ConfigValue(
+            "tool_status_emojis",
+            "thinking=❔\nterminal=🖥\nweb=🌐\nfile=📦\nmcub=🧲\nmessage=💬\ndialog=🗂\nchat=🐈‍⬛\nmoderation=🛡\nprofile=👤\ncontacts=👥\ncreation=✨\nskills=🧠\ncode=🧬\ncontext=🧾\nutility=🛠\ndefault=🛠",
+            description="Custom emoji/icon map for {status_emoji}/{status_icon}. Format: group_or_tool=emoji per line. Tool-specific keys like terminal.run or thinking.note override groups like terminal/thinking. Premium emoji HTML is allowed via {status_emoji_html}/{status_icon_html}.",
+            validator=String(default="thinking=❔\nterminal=🖥\nweb=🌐\nfile=📦\nmcub=🧲\nmessage=💬\ndialog=🗂\nchat=🐈‍⬛\nmoderation=🛡\nprofile=👤\ncontacts=👥\ncreation=✨\nskills=🧠\ncode=🧬\ncontext=🧾\nutility=🛠\ndefault=🛠"),
+        ),
+        ConfigValue(
+            "tool_display_max_chars",
+            1200,
+            description="Maximum chars from current tool input shown in status form",
+            validator=Integer(default=1200, min=80, max=4000),
+        ),
+        ConfigValue(
+            "tool_display_log_lines",
+            8,
+            description="How many recent tool names to show in status form",
+            validator=Integer(default=8, min=0, max=30),
+        ),
+        ConfigValue(
+            "thinking_display_limit",
+            3,
+            description="How many recent thinking.note entries to show in {thinking}",
+            validator=Integer(default=3, min=0, max=20),
+        ),
+        ConfigValue(
+            "thinking_empty_text",
+            "Модель ещё не думала.",
+            description="Text for {thinking} when no thinking.note entries exist",
+            validator=String(default="Модель ещё не думала."),
+        ),
+        ConfigValue(
+            "thinking_bullet",
+            "•",
+            description="Prefix marker for each thinking.note line in {thinking}. Empty disables the marker",
+            validator=String(default="•"),
         ),
         ConfigValue(
             "random_strings",
@@ -428,6 +499,24 @@ class OpenAgent(ModuleBase):
             description="Maximum chars used for repo context in system prompt",
             validator=Integer(default=7000, min=500, max=30000),
         ),
+        ConfigValue(
+            "skills_enabled",
+            True,
+            description="Enable loading OpenAgent skills into the system prompt",
+            validator=Boolean(default=True),
+        ),
+        ConfigValue(
+            "skills_trigger_mode",
+            "auto",
+            description="When to load skills: auto = only on keyword match, always = every request, off = never",
+            validator=String(default="auto"),
+        ),
+        ConfigValue(
+            "skill_repo_url",
+            "https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/main/OpenAgent/skills",
+            description="Base URL for installable OpenAgent skills repository",
+            validator=String(default="https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/main/OpenAgent/skills"),
+        ),
     )
 
     async def on_load(self) -> None:
@@ -443,7 +532,7 @@ class OpenAgent(ModuleBase):
             ),
             "temperature": 0.7,
             "max_tokens": 1200,
-            "timeout": 90,
+            "timeout": 180,
             "terminal_enabled": True,
             "terminal_steps": 3,
             "terminal_timeout": 30,
@@ -464,6 +553,10 @@ class OpenAgent(ModuleBase):
             "media_max_bytes": 8_000_000,
             "context_enabled": True,
             "context_turns": 10,
+            "context_compaction_enabled": True,
+            "context_compaction_chars": 18000,
+            "context_compaction_keep_turns": 2,
+            "context_compaction_max_tokens": 900,
             "tool_memory_enabled": False,
             "tool_memory_items": 20,
             "tool_memory_max_chars": 500,
@@ -471,10 +564,20 @@ class OpenAgent(ModuleBase):
             "request_label": "<b>📝 Запрос:</b>",
             "response_label": "<b>💬 Ответ:</b>",
             "thinking_template": "{random}",
+            "tool_display_template": "<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>",
+            "tool_status_emojis": "thinking=❔\nterminal=🖥\nweb=🌐\nfile=📦\nmcub=🧲\nmessage=💬\ndialog=🗂\nchat=🐈‍⬛\nmoderation=🛡\nprofile=👤\ncontacts=👥\ncreation=✨\nskills=🧠\ncode=🧬\ncontext=🧾\nutility=🛠\ndefault=🛠",
+            "tool_display_max_chars": 1200,
+            "tool_display_log_lines": 8,
+            "thinking_display_limit": 3,
+            "thinking_empty_text": "Модель ещё не думала.",
+            "thinking_bullet": "•",
             "random_strings": ["Thinking...", "Думаю...", "Генерирую..."],
             "placeholders": "",
             "repo_context_enabled": True,
             "repo_context_max_chars": 7000,
+            "skills_enabled": True,
+            "skills_trigger_mode": "auto",
+            "skill_repo_url": "https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/main/OpenAgent/skills",
         }
         config_dict = await self.kernel.get_module_config(self.name, defaults)
         if isinstance(config_dict.get("random_strings"), str):
@@ -497,6 +600,7 @@ class OpenAgent(ModuleBase):
         self._tool_memory: dict[int, list[str]] = {}
         self._cancelled_generations: set[str] = set()
         self._regen_payloads: dict[str, dict[str, Any]] = {}
+        self._inline_status_waiters: dict[str, asyncio.Future[Any]] = {}
         self._last_token_usage = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -529,14 +633,41 @@ class OpenAgent(ModuleBase):
     def _provider_label(self) -> str:
         return self.PROVIDER_LABELS.get(self._provider(), "Custom")
 
-    def _response_title(self, elapsed: float) -> str:
+    def _response_title(
+        self,
+        elapsed: float,
+        *,
+        tool_count: int = 0,
+        thinking_notes: list[str] | None = None,
+    ) -> str:
         return self._render_template(
             str(self.config.get("response_header", ""))
             or "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
             elapsed=elapsed,
+            tool_count=tool_count,
+            thinking_notes=thinking_notes,
         )
 
-    def _placeholder_values(self, *, elapsed: float | None = None) -> dict[str, str]:
+    def _format_thinking_notes(self, thinking_notes: list[str] | None = None) -> str:
+        notes = [str(note).strip() for note in (thinking_notes or []) if str(note).strip()]
+        limit = int(self.config.get("thinking_display_limit", 3) or 0)
+        if limit > 0:
+            notes = notes[-limit:]
+        else:
+            notes = []
+        if not notes:
+            return str(self.config.get("thinking_empty_text", "Модель ещё не думала.") or "Модель ещё не думала.")
+        bullet = str(self.config.get("thinking_bullet", "•") or "").strip()
+        prefix = f"{bullet} " if bullet else ""
+        return "\n".join(f"{prefix}{note}" for note in notes)
+
+    def _placeholder_values(
+        self,
+        *,
+        elapsed: float | None = None,
+        tool_count: int | None = None,
+        thinking_notes: list[str] | None = None,
+    ) -> dict[str, str]:
         raw_random = self.config.get("random_strings", []) or []
         if isinstance(raw_random, str):
             raw_random = raw_random.splitlines()
@@ -546,19 +677,32 @@ class OpenAgent(ModuleBase):
             "provider": self._provider_label(),
             "provider_key": self._provider(),
             "model": self._model(),
-            "tool_count": str(len(self.TOOL_REGISTRY)),
+            "tool_count": str(tool_count if tool_count is not None else 0),
+            "available_tool_count": str(len(self.TOOL_REGISTRY)),
             "elapsed": f"{elapsed:.1f}" if elapsed is not None else "0.0",
             "input_tokens": str(self._last_token_usage.get("input_tokens", 0)),
             "output_tokens": str(self._last_token_usage.get("output_tokens", 0)),
             "total_tokens": str(self._last_token_usage.get("total_tokens", 0)),
+            "thinking": self._format_thinking_notes(thinking_notes),
             "random": random_value,
             "prefix": getattr(self.kernel, "custom_prefix", ".") or ".",
             "time": time.strftime("%H:%M:%S"),
             "date": time.strftime("%Y-%m-%d"),
         }
 
-    def _render_template(self, template: str, *, elapsed: float | None = None) -> str:
-        values = self._placeholder_values(elapsed=elapsed)
+    def _render_template(
+        self,
+        template: str,
+        *,
+        elapsed: float | None = None,
+        tool_count: int | None = None,
+        thinking_notes: list[str] | None = None,
+    ) -> str:
+        values = self._placeholder_values(
+            elapsed=elapsed,
+            tool_count=tool_count,
+            thinking_notes=thinking_notes,
+        )
         result = template or ""
         for key, value in values.items():
             result = result.replace("{" + key + "}", str(value))
@@ -572,20 +716,254 @@ class OpenAgent(ModuleBase):
     def _format_placeholders(self) -> str:
         return "\n".join(
             [
+                "Template placeholders available in response_header, request_label, response_label, thinking_template, and tool_display_template:",
+                "",
+                "General",
                 "{provider} - Provider label",
                 "{provider_key} - Provider config key",
                 "{model} - Current model",
-                "{tool_count} - Registered OpenAgent tool operation count",
+                "{tool_count} - How many tools the agent used in this request",
+                "{available_tool_count} - Registered OpenAgent tool operation count",
                 "{elapsed} - Generation time seconds",
                 "{input_tokens} - Input/prompt tokens accepted by provider",
                 "{output_tokens} - Output/completion tokens returned by provider",
                 "{total_tokens} - Total tokens for last provider response",
+                "{thinking} - Recent thinking.note entries or thinking_empty_text",
                 "{random} - Random line from random_strings",
                 "{prefix} - Current command prefix",
                 "{time} - Current local time",
                 "{date} - Current local date",
+                "",
+                "Raw tool display",
+                "{tool} - Current tool name in tool_display_template",
+                "{title} - Current tool status title in tool_display_template",
+                "{value} - Current tool input in tool_display_template",
+                "{log} - Recent tool log in tool_display_template",
+                "{step} - Current tool step number in tool_display_template",
+                "",
+                "Semantic tool display",
+                "{round} - Alias for current tool step number",
+                "{round_total} - Maximum tool rounds per request",
+                "{progress_bar} - Text progress bar for current round",
+                "{progress_percent} - Current round progress percent",
+                "{status_emoji} - Emoji/icon for current tool category from tool_status_emojis",
+                "{status_icon} - Alias for status_emoji",
+                "{status_emoji_html} - Raw HTML emoji/icon for current tool category; use for premium <a> emoji",
+                "{status_icon_html} - Alias for status_emoji_html",
+                "{status_text} - Human-readable current tool action",
+                "{tool_group} - Current tool namespace/category",
+                "{tool_short} - Current tool name without namespace",
+                "{tool_input} - Escaped current tool input; empty for thinking.note",
+                "{tool_input_block} - Ready HTML block with tool input; empty for thinking.note/no input",
+                "{thinking_line} - Recent thinking notes as escaped text",
+                "{thinking_block} - Ready HTML block with recent thinking notes",
+                "{log_lines} - Recent tool log as escaped text",
+                "{log_block} - Ready HTML block with recent tool log",
+                "{log_count} - Number of tools in current request log",
+                "{elapsed_line} - Ready text with elapsed seconds",
+                "{token_line} - Ready text with token usage",
+                "{model_line} - Ready text with provider/model",
+                "{activity_line} - Ready text with random status and elapsed seconds",
+                "",
+                "Config tips",
+                "tool_status_emojis format: one mapping per line, e.g. terminal=🖥 or thinking.note=<a href=\"tg://emoji?id=...\">❔</a>",
+                "tool-specific emoji keys override group keys; default=... is used as fallback.",
             ]
         )
+
+    def _tool_group(self, tool_name: str) -> str:
+        tool_name = (tool_name or "").lower().strip()
+        if "." in tool_name:
+            return tool_name.split(".", 1)[0]
+        if tool_name in {"terminal", "web_search", "send_message", "dialogs", "history", "search_messages"}:
+            return {
+                "web_search": "web",
+                "send_message": "message",
+                "dialogs": "dialog",
+                "history": "message",
+                "search_messages": "message",
+            }.get(tool_name, tool_name)
+        return tool_name or "tool"
+
+    def _tool_status_emoji(self, tool_name: str) -> str:
+        tool_name = (tool_name or "").lower().strip()
+        group = self._tool_group(tool_name)
+        configured: dict[str, str] = {}
+        raw = self.config.get("tool_status_emojis", "") if hasattr(self, "config") else ""
+        for line in str(raw or "").splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key and value:
+                configured[key] = value
+        if tool_name in configured:
+            return configured[tool_name]
+        if group in configured:
+            return configured[group]
+        if "default" in configured:
+            return configured["default"]
+        return {
+            "thinking": "❔",
+            "terminal": "🖥",
+            "web": "🌐",
+            "file": "📦",
+            "mcub": "🧲",
+            "message": "💬",
+            "dialog": "🗂",
+            "chat": "🐈‍⬛",
+            "moderation": "🛡",
+            "profile": "👤",
+            "contacts": "👥",
+            "creation": "✨",
+            "skills": "🧠",
+            "code": "🧬",
+            "context": "🧾",
+            "utility": "🛠",
+        }.get(group, "🛠")
+
+    def _tool_status_text(self, tool_name: str, title: str) -> str:
+        tool_name = (tool_name or "").lower().strip()
+        group = self._tool_group(tool_name)
+        if tool_name == "thinking.note":
+            return "Думаю"
+        if group == "terminal":
+            return "Выполняю команду"
+        if group == "web":
+            return "Работаю с web"
+        if group == "file":
+            return "Работаю с файлом"
+        if group == "mcub":
+            return "Выполняю MCUB-команду"
+        if group == "message":
+            return "Работаю с сообщениями"
+        if group == "chat":
+            return "Проверяю чат"
+        if group == "dialog":
+            return "Проверяю диалоги"
+        if group == "code":
+            return "Готовлю код"
+        return title or f"Выполняю {tool_name or 'tool'}"
+
+    def _progress_bar(self, step: int, total: int, width: int = 10) -> str:
+        total = max(1, total)
+        step = max(0, min(step, total))
+        filled = max(0, min(width, round(width * step / total)))
+        return "▰" * filled + "▱" * (width - filled)
+
+    def _tool_display_semantic_values(
+        self,
+        *,
+        title: str,
+        tool_name: str,
+        safe_value: str,
+        log_text: str,
+        log: list[str],
+        elapsed: float | None,
+        thinking_notes: list[str] | None,
+    ) -> dict[str, str]:
+        step = len(log)
+        total = self.AGENT_MAX_STEPS
+        group = self._tool_group(tool_name)
+        short = (tool_name or title or "tool").split(".")[-1]
+        status_emoji = self._tool_status_emoji(tool_name)
+        status_text = self._tool_status_text(tool_name, title)
+        thinking_line = self._format_thinking_notes(thinking_notes)
+        log_lines = html.escape(log_text)
+        tool_input = "" if (tool_name or "").lower().strip() == "thinking.note" else html.escape(safe_value)
+        tool_input_block = (
+            f"<blockquote expandable><b>📦 Tool input</b>\n<code>{tool_input}</code></blockquote>"
+            if tool_input
+            else ""
+        )
+        log_block = (
+            f"<blockquote expandable><b>😪 Log tools</b>\n<code>{log_lines}</code></blockquote>"
+            if log_lines
+            else ""
+        )
+        thinking_block = f"<blockquote expandable><b>❔ Thinking</b>\n{thinking_line}</blockquote>"
+        elapsed_text = f"{elapsed:.1f}s" if elapsed is not None else "0.0s"
+        token_line = (
+            f"💸 in {self._last_token_usage.get('input_tokens', 0)}, "
+            f"out {self._last_token_usage.get('output_tokens', 0)} | "
+            f"total {self._last_token_usage.get('total_tokens', 0)}"
+        )
+        progress_percent = str(int(round(100 * min(step, total) / max(1, total))))
+        return {
+            "round": str(step),
+            "round_total": str(total),
+            "progress_bar": self._progress_bar(step, total),
+            "progress_percent": progress_percent,
+            "status_emoji": html.escape(status_emoji),
+            "status_icon": html.escape(status_emoji),
+            "status_emoji_html": status_emoji,
+            "status_icon_html": status_emoji,
+            "status_text": html.escape(status_text),
+            "tool_group": html.escape(group),
+            "tool_short": html.escape(short),
+            "tool_input": tool_input,
+            "tool_input_block": tool_input_block,
+            "thinking_line": thinking_line,
+            "thinking_block": thinking_block,
+            "log_lines": log_lines,
+            "log_block": log_block,
+            "log_count": str(len(log)),
+            "elapsed_line": f"⏳ {elapsed_text}",
+            "token_line": html.escape(token_line),
+            "model_line": html.escape(f"{self._provider_label()} / {self._model()}"),
+            "activity_line": html.escape(f"{self._placeholder_values(elapsed=elapsed).get('random', 'Thinking...')} {elapsed_text}"),
+        }
+
+    def _render_tool_display(
+        self,
+        *,
+        title: str,
+        tool_name: str,
+        value: str,
+        log: list[str],
+        elapsed: float | None = None,
+        thinking_notes: list[str] | None = None,
+    ) -> str:
+        max_chars = int(self.config.get("tool_display_max_chars", 1200) or 1200)
+        log_lines = int(self.config.get("tool_display_log_lines", 8) or 8)
+        safe_value = value if len(value) <= max_chars else value[:max_chars] + "..."
+        log_text = "\n".join(log[-log_lines:]) if log_lines > 0 else ""
+        if len(log_text) > 1800:
+            log_text = log_text[-1800:]
+        values = {
+            key: html.escape(value)
+            for key, value in self._placeholder_values(
+                elapsed=elapsed,
+                tool_count=len(log),
+                thinking_notes=thinking_notes,
+            ).items()
+        }
+        values.update({
+            "title": html.escape(title),
+            "tool": html.escape(tool_name or title),
+            "value": html.escape(safe_value),
+            "log": html.escape(log_text),
+            "step": str(len(log)),
+            "tool_count": str(len(log)),
+        })
+        values.update(
+            self._tool_display_semantic_values(
+                title=title,
+                tool_name=tool_name,
+                safe_value=safe_value,
+                log_text=log_text,
+                log=log,
+                elapsed=elapsed,
+                thinking_notes=thinking_notes,
+            )
+        )
+        template = str(self.config.get("tool_display_template", "") or "")
+        if not template:
+            template = "<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>"
+        for key, item in values.items():
+            template = template.replace("{" + key + "}", item)
+        return template
 
     def _tool_registry_prompt(self) -> str:
         lines = []
@@ -593,16 +971,28 @@ class OpenAgent(ModuleBase):
             lines.append(f"{index}. {name}")
         return "\n".join(lines)
 
-    def _request_label(self, *, elapsed: float | None = None) -> str:
+    def _request_label(
+        self,
+        *,
+        elapsed: float | None = None,
+        thinking_notes: list[str] | None = None,
+    ) -> str:
         return self._render_template(
             str(self.config.get("request_label", "") or "<b>📝 Запрос:</b>"),
             elapsed=elapsed,
+            thinking_notes=thinking_notes,
         )
 
-    def _response_label(self, *, elapsed: float | None = None) -> str:
+    def _response_label(
+        self,
+        *,
+        elapsed: float | None = None,
+        thinking_notes: list[str] | None = None,
+    ) -> str:
         return self._render_template(
             str(self.config.get("response_label", "") or "<b>💬 Ответ:</b>"),
             elapsed=elapsed,
+            thinking_notes=thinking_notes,
         )
 
     def _remember_context(self, chat_id: int | None, prompt: str, answer: str) -> None:
@@ -618,6 +1008,10 @@ class OpenAgent(ModuleBase):
         max_messages = int(self.config["context_turns"]) * 2
         if max_messages <= 0:
             history.clear()
+        elif history and history[0].get("role") == "system" and str(history[0].get("content", "")).startswith("Compacted previous OpenAgent session context:"):
+            keep_tail = max(0, max_messages - 1)
+            tail_source = history[1:]
+            self._chat_history[int(chat_id)] = [history[0], *tail_source[-keep_tail:]] if keep_tail else [history[0]]
         else:
             del history[:-max_messages]
 
@@ -625,6 +1019,99 @@ class OpenAgent(ModuleBase):
         if not chat_id or not self.config["context_enabled"]:
             return []
         return list(self._chat_history.get(int(chat_id), []))
+
+    def _history_chars(self, history: list[dict[str, str]]) -> int:
+        return sum(len(str(item.get("content", ""))) for item in history)
+
+    def _format_history_for_compaction(self, history: list[dict[str, str]]) -> str:
+        parts = []
+        for index, item in enumerate(history, 1):
+            role = str(item.get("role", "unknown"))
+            content = str(item.get("content", ""))
+            parts.append(f"[{index}] {role}:\n{content}")
+        return "\n\n".join(parts)
+
+    def _compaction_system_prompt(self) -> str:
+        return (
+            "You compact an OpenAgent chat session. Read the full prior context and "
+            "write a concise continuity summary that lets the assistant continue work "
+            "without needing the omitted messages. Preserve: user goals, decisions, "
+            "constraints, files changed/read, commands run, test results, current TODOs, "
+            "open questions, and important warnings. Do not invent facts. Do not include "
+            "irrelevant chatter. Output plain text markdown only."
+        )
+
+    async def _compact_chat_history_if_needed(
+        self,
+        chat_id: int | None,
+        provider: str,
+        api_key: str,
+    ) -> bool:
+        if not chat_id or not bool(self.config.get("context_enabled", True)):
+            return False
+        if not bool(self.config.get("context_compaction_enabled", True)):
+            return False
+
+        history = self._chat_history.get(int(chat_id), [])
+        threshold = int(self.config.get("context_compaction_chars", 18000) or 18000)
+        if not history or self._history_chars(history) <= threshold:
+            return False
+
+        keep_messages = max(0, int(self.config.get("context_compaction_keep_turns", 2) or 2) * 2)
+        old_history = history[:-keep_messages] if keep_messages else history
+        recent_history = history[-keep_messages:] if keep_messages else []
+        if not old_history:
+            return False
+
+        max_chars = max(threshold * 2, threshold + 4000)
+        compact_input = self._format_history_for_compaction(old_history)
+        if len(compact_input) > max_chars:
+            compact_input = compact_input[-max_chars:]
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._compaction_system_prompt()},
+            {
+                "role": "user",
+                "content": (
+                    "Compact this OpenAgent session context. The assistant will continue "
+                    "after your summary, with the newest turns kept separately.\n\n"
+                    f"{compact_input}"
+                ),
+            },
+        ]
+        max_tokens = int(self.config.get("context_compaction_max_tokens", 900) or 900)
+        try:
+            if provider in ("openai", "other"):
+                summary = await self._ask_openai_compatible(
+                    provider,
+                    messages,
+                    api_key,
+                    max_tokens_override=max_tokens,
+                )
+            elif provider == "google":
+                summary = await self._ask_google(
+                    messages,
+                    api_key,
+                    max_tokens_override=max_tokens,
+                )
+            else:
+                return False
+        except Exception as exc:
+            self.log.warning(f"OpenAgent context compaction failed: {exc}")
+            return False
+
+        summary = (summary or "").strip()
+        if not summary:
+            return False
+
+        self._chat_history[int(chat_id)] = [
+            {
+                "role": "system",
+                "content": "Compacted previous OpenAgent session context:\n" + summary[-12000:],
+            },
+            *recent_history,
+        ]
+        return True
 
     def _tool_memory_note(self, text: str) -> str:
         text = re.sub(r"\s+", " ", text or "").strip()
@@ -670,9 +1157,12 @@ class OpenAgent(ModuleBase):
         await self.save_config()
 
     def _resolve_skills_dir(self) -> Path:
-        path = Path.cwd() / "openagent_skills"
-        path.mkdir(exist_ok=True)
+        path = Path(self._workspace_dir()) / "openagent_skills"
+        path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def _legacy_skills_dir(self) -> Path:
+        return Path(self._workspace_dir()) / "openagent_skills"
 
     def _workspace_dir(self) -> str:
         work_dir = getattr(self.kernel, "WORK_DIR", None)
@@ -748,53 +1238,291 @@ class OpenAgent(ModuleBase):
     def _skill_path(self, name: str) -> Path:
         if not getattr(self, "_skills_dir", None):
             self._skills_dir = self._resolve_skills_dir()
-        return self._skills_dir / f"{self._safe_skill_name(name)}.md"
+        return self._skills_dir / self._safe_skill_name(name) / "SKILL.md"
+
+    def _skill_name_from_path(self, path: Path) -> str:
+        if path.name == "SKILL.md" and path.parent.name:
+            return path.parent.name
+        return path.stem
+
+    def _find_skill_path(self, name: str) -> Path:
+        path = self._skill_path(name)
+        if path.exists():
+            return path
+
+        legacy_path = self._legacy_skills_dir() / f"{self._safe_skill_name(name)}.md"
+        if legacy_path.exists():
+            return legacy_path
+        return path
 
     def _list_skills(self) -> list[Path]:
         if not getattr(self, "_skills_dir", None):
             self._skills_dir = self._resolve_skills_dir()
         try:
             self._skills_dir.mkdir(parents=True, exist_ok=True)
-            return sorted(self._skills_dir.glob("*.md"), key=lambda p: p.name.lower())
+            skills = list(self._skills_dir.glob("*/SKILL.md"))
+
+            # Backward compatibility for older OpenAgent exports. OpenCode-style
+            # skills in openagent_skills/<name>/SKILL.md win on name conflicts.
+            seen = {self._skill_name_from_path(path).lower() for path in skills}
+            legacy_dir = self._legacy_skills_dir()
+            if legacy_dir.is_dir():
+                for path in legacy_dir.glob("*.md"):
+                    if path.stem.lower() not in seen:
+                        skills.append(path)
+                        seen.add(path.stem.lower())
+
+            return sorted(skills, key=lambda p: self._skill_name_from_path(p).lower())
         except Exception as e:
             self.log.warning(f"OpenAgent skills directory unavailable: {e}")
             return []
 
-    def _load_skills_prompt(self) -> str:
+    def _should_load_skills(self, prompt: str = "") -> bool:
+        if not bool(self.config.get("skills_enabled", True)):
+            return False
+
+        mode = str(self.config.get("skills_trigger_mode", "auto") or "auto").strip().lower()
+        if mode in {"off", "false", "disabled", "disable", "never", "0"}:
+            return False
+        if mode in {"always", "all", "on", "true", "1"}:
+            return True
+
+        text = (prompt or "").lower()
+        if not text.strip():
+            return False
+
+        return bool(self._matching_skill_paths(prompt))
+
+    def _skill_frontmatter(self, text: str) -> dict[str, str]:
+        if not text.startswith("---"):
+            return {}
+        match = re.match(r"^---\s*\n(.*?)\n---\s*\n?", text, flags=re.DOTALL)
+        if not match:
+            return {}
+
+        data: dict[str, str] = {}
+        current_key = ""
+        current_lines: list[str] = []
+        for line in match.group(1).splitlines():
+            key_match = re.match(r"^([a-zA-Z0-9_-]+):\s*(.*)$", line)
+            if key_match:
+                if current_key:
+                    data[current_key] = "\n".join(current_lines).strip()
+                current_key = key_match.group(1).strip().lower()
+                current_lines = [key_match.group(2).strip()]
+            elif current_key:
+                current_lines.append(line.strip())
+        if current_key:
+            data[current_key] = "\n".join(current_lines).strip()
+        return data
+
+    def _skill_keywords_from_text(self, text: str, fallback_name: str) -> list[str]:
+        frontmatter = self._skill_frontmatter(text)
+        raw = frontmatter.get("keywords", "")
+        keywords: list[str] = []
+
+        if raw.startswith("[") and raw.endswith("]"):
+            keywords.extend(part.strip().strip("'\"") for part in raw.strip("[]").split(","))
+        else:
+            for line in raw.splitlines():
+                cleaned = line.strip().lstrip("-").strip().strip("'\"")
+                if cleaned:
+                    keywords.append(cleaned)
+
+        if not keywords:
+            keywords.append(fallback_name)
+            description = frontmatter.get("description", "")
+            keywords.extend(re.findall(r"[\wА-Яа-яЁё.-]{4,}", description)[:6])
+
+        return [keyword.lower() for keyword in keywords if keyword.strip()]
+
+    def _skill_matches_prompt(self, path: Path, prompt: str) -> bool:
+        text = (prompt or "").lower()
+        if not text.strip():
+            return False
+        try:
+            skill_text = path.read_text(encoding="utf-8", errors="replace")[:2000]
+        except Exception:
+            return False
+        keywords = self._skill_keywords_from_text(skill_text, self._skill_name_from_path(path))
+        return any(keyword in text for keyword in keywords)
+
+    def _matching_skill_paths(self, prompt: str = "") -> list[Path]:
+        mode = str(self.config.get("skills_trigger_mode", "auto") or "auto").strip().lower()
+        skills = self._list_skills()
+        if mode in {"always", "all", "on", "true", "1"}:
+            return skills
+        if mode in {"off", "false", "disabled", "disable", "never", "0"}:
+            return []
+        return [path for path in skills if self._skill_matches_prompt(path, prompt)]
+
+    def _load_skills_prompt(self, prompt: str = "") -> str:
+        if not self._should_load_skills(prompt):
+            return ""
+
         chunks = []
-        for path in self._list_skills()[:20]:
+        for path in self._matching_skill_paths(prompt)[:20]:
             try:
                 text = path.read_text(encoding="utf-8")[:4000]
             except Exception:
                 continue
-            chunks.append(f"## Skill: {path.stem}\n{text}")
+            chunks.append(f"## Skill: {self._skill_name_from_path(path)}\n{text}")
         if not chunks:
             return ""
         return "\n\nLoaded OpenAgent skills. Use them when relevant:\n" + "\n\n".join(chunks)
 
-    async def _save_skill(self, name: str, content: str) -> str:
+    def _normalize_skill_content(self, name: str, content: str) -> str:
+        text = content.strip()
+        if text.startswith("---"):
+            return text + "\n"
+
+        safe_name = self._safe_skill_name(name)
+        first_heading = re.search(r"^#\s+(.+)$", text, flags=re.MULTILINE)
+        description = first_heading.group(1).strip() if first_heading else safe_name
+        frontmatter = (
+            "---\n"
+            f"name: {safe_name}\n"
+            f"description: {description}\n"
+            "---\n\n"
+        )
+        return frontmatter + text + "\n"
+
+    def _save_skill(self, name: str, content: str) -> str:
         safe_name = self._safe_skill_name(name)
         path = self._skill_path(safe_name)
-        path.write_text(content.strip() + "\n", encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self._normalize_skill_content(safe_name, content), encoding="utf-8")
         return safe_name
 
+    def _skill_repo_base_url(self) -> str:
+        return str(
+            self.config.get(
+                "skill_repo_url",
+                "https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/main/OpenAgent/skills",
+            )
+            or ""
+        ).strip().rstrip("/")
 
-    def _system_prompt(self) -> str:
+    async def _fetch_text_url(self, url: str, *, max_chars: int = 120000) -> str:
+        timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
+        headers = {"User-Agent": "OpenAgent/skills"}
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url, allow_redirects=True) as resp:
+                text = await resp.text(errors="replace")
+                if resp.status >= 400:
+                    raise RuntimeError(f"HTTP {resp.status}: {text[:500]}")
+                return text[:max_chars]
+
+    async def _fetch_skill_repo_index(self) -> list[dict[str, Any]]:
+        base_url = self._skill_repo_base_url()
+        if not base_url:
+            raise RuntimeError("skill_repo_url is not configured")
+        raw = await self._fetch_text_url(f"{base_url}/index.json", max_chars=60000)
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            items = data.get("skills") or []
+        elif isinstance(data, list):
+            items = data
+        else:
+            items = []
+        return [item for item in items if isinstance(item, dict)]
+
+    def _repo_skill_match_score(self, query: str, item: dict[str, Any]) -> int:
+        needle = self._safe_skill_name(query).lower()
+        names = [
+            str(item.get("name") or ""),
+            str(item.get("id") or ""),
+            Path(str(item.get("path") or "")).parent.name,
+        ]
+        names.extend(str(alias) for alias in item.get("aliases") or [] if alias)
+        normalized = [self._safe_skill_name(name).lower() for name in names if name]
+        if needle in normalized:
+            return 100
+        if any(value.startswith(needle) for value in normalized):
+            return 75
+        if any(needle in value for value in normalized):
+            return 50
+        haystack = " ".join(
+            [str(item.get("description") or "")]
+            + [str(keyword) for keyword in item.get("keywords") or []]
+        ).lower()
+        return 25 if query.lower() in haystack else 0
+
+    async def _repo_skill_candidates(self, query: str) -> list[dict[str, Any]]:
+        index = await self._fetch_skill_repo_index()
+        ranked = [
+            (self._repo_skill_match_score(query, item), item)
+            for item in index
+        ]
+        return [item for score, item in sorted(ranked, key=lambda pair: pair[0], reverse=True) if score > 0]
+
+    async def _install_repo_skill(self, name: str) -> str:
+        query = (name or "").strip()
+        if not query:
+            raise RuntimeError("skill name is required")
+        base_url = self._skill_repo_base_url()
+        candidates = await self._repo_skill_candidates(query)
+        if not candidates:
+            raise RuntimeError(f"Skill not found in repo: {query}")
+        item = candidates[0]
+        path = str(item.get("path") or f"{self._safe_skill_name(str(item.get('name') or query))}/SKILL.md").lstrip("/")
+        content = await self._fetch_text_url(f"{base_url}/{quote(path)}", max_chars=200000)
+        saved_name = self._save_skill(str(item.get("name") or query), content)
+        return saved_name
+
+    async def _format_skill_repo_list(self) -> str:
+        items = await self._fetch_skill_repo_index()
+        if not items:
+            return "No skills in repository"
+        lines = []
+        for item in items:
+            name = str(item.get("name") or item.get("id") or Path(str(item.get("path") or "")).parent.name or "skill")
+            description = str(item.get("description") or "").strip()
+            lines.append(f"- {name}: {description}" if description else f"- {name}")
+        return "\n".join(lines)
+
+
+    def _thinking_system_prompt(self) -> str:
+        base = str(self.config["system_prompt"]).strip()
+        return (
+            f"{base}\n\n"
+            "Your ONLY task right now: output exactly one tool_call using thinking.note.\n"
+            "The note must be one concise user-facing sentence, max 180 chars.\n"
+            "Say what you actually understood from the request and the immediate next step.\n"
+            "Do not write a generic heartbeat. Do not say you will clarify unless you truly need to ask a question next.\n"
+            "Available tools in this turn: thinking.note only.\n\n"
+            "```tool_call\n"
+            "{\"tool\":\"thinking.note\",\"args\":{\"note\":\"Понял задачу: <кратко>. Дальше <следующий шаг>.\"}}\n"
+            "```\n"
+            "Output nothing else. No text before or after. No other tools."
+        )
+
+    def _system_prompt(self, user_prompt: str = "") -> str:
         prompt = str(self.config["system_prompt"]).strip()
         tlist = ", ".join(sorted(self._get_tool_map().keys()))
         prompt += (
             f"\n\nOpenAgent 0.5.0 refreshed architecture is active. You have access to {len(self.TOOL_REGISTRY)} tool operations.\n"
-            "To use a tool, output exactly one XML tag per turn: <tool.name attr=\"val\">body</tool.name> or <tool.name/>.\n"
+            "To use tools, output one or more fenced JSON blocks in the same turn and nothing else. Batch independent tools to reduce latency:\n"
+            "```tool_call\n"
+            "{\"tool\":\"tool.name\",\"args\":{\"key\":\"value\"},\"body\":\"optional long text\"}\n"
+            "```\n"
+            "Use args for structured parameters and body for commands, messages, file content, or long text.\n"
+            "If a non-startup progress note and a real tool can run without seeing the note output, emit thinking.note and the real tool in the same turn.\n"
+            "Do not use XML/HTML tags for new tool calls; legacy XML is only a compatibility fallback.\n"
             f"Available tool names: {tlist}\n"
             "\nCore guidelines:\n"
             "1. Use terminal.run for shell commands (cwd is dynamic).\n"
             "2. Use web.search for search or web.fetch_url for direct page reading.\n"
-            "3. Use message.send_current or message.send_target for sending messages.\n"
+            "3. Use message.send_current or message.send_target for sending messages only when explicitly requested.\n"
             "4. Use chat.* and profile.* for management.\n"
             "5. If you need to create a skill for later use, use skills.save_from_ai.\n"
-            "Never explain the tool call. Just output it and wait for results."
+            "6. For mcub.command, pass the command WITHOUT the userbot prefix. Correct: {\"tool\":\"mcub.command\",\"args\":{\"command\":\"ping\"}} or body 'ping'. Incorrect: '1ping' or '.ping'. The runtime adds the current prefix ({prefix}) automatically.\n"
+            "7. A separate startup thinking.note turn has already been completed before this main tool loop; do not repeat a startup/prologue note before the first real tool.\n"
+            "8. Do NOT use tools unless the user request actually requires tools or explicitly asks for an action/tool. Simple greetings or chat like 'ку' must be answered directly in plain text, e.g. 'Привет!', with no tool calls.\n"
+            "9. Use thinking.note only for meaningful later progress updates: after important findings, before risky/long actions, before sending/saving final artifacts, or when switching approach. Avoid hidden chain-of-thought; notes must be concise user-facing status updates.\n"
+            "Never explain tool calls. Just output the tool_call block(s) and wait for results."
         )
-        prompt += self._load_skills_prompt()
+        prompt += self._load_skills_prompt(user_prompt)
         prompt += self._repo_context_prompt()
         return prompt
 
@@ -1247,18 +1975,22 @@ class OpenAgent(ModuleBase):
             self._outputs: list[str] = []
 
         async def edit(self, text: str, *args: Any, **kwargs: Any) -> "OpenAgent._MCUBEvent":
+            await asyncio.sleep(0)
             self._outputs.append(str(text))
             return self
 
         async def reply(self, text: str, *args: Any, **kwargs: Any) -> "OpenAgent._MCUBEvent":
+            await asyncio.sleep(0)
             self._outputs.append(str(text))
             return self
 
         async def respond(self, text: str, *args: Any, **kwargs: Any) -> "OpenAgent._MCUBEvent":
+            await asyncio.sleep(0)
             self._outputs.append(str(text))
             return self
 
         async def delete(self, *args: Any, **kwargs: Any) -> None:
+            await asyncio.sleep(0)
             return None
 
         async def get_reply_message(self) -> Any:
@@ -1302,6 +2034,7 @@ class OpenAgent(ModuleBase):
         return output[-6000:]
 
     async def _dialogs_tool(self, mode: str) -> str:
+        await asyncio.sleep(0)
         mode = (mode or "private").strip().lower()
         lines = []
         try:
@@ -1555,6 +2288,7 @@ class OpenAgent(ModuleBase):
         return f"Bot created: @{username}\nName: {name}\nToken: {token}"
 
     async def _resolve_tool_chat(self, chat: str | None, source_event: Any | None) -> Any:
+        await asyncio.sleep(0)
         chat = (chat or "").strip()
         if not chat or chat.lower() in {"current", "this", "here"}:
             if source_event is not None and getattr(source_event, "chat_id", None) is not None:
@@ -1604,7 +2338,7 @@ class OpenAgent(ModuleBase):
         if not query:
             return "Search query is empty"
         limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
+        chat = await self._resolve_tool_chat(attrs.get("chat") or attrs.get("chat_id"), source_event)
         lines = []
         try:
             async for msg in self.client.iter_messages(chat, search=query, limit=limit):
@@ -2112,20 +2846,79 @@ class OpenAgent(ModuleBase):
         title: str,
         value: str,
         log: list[str],
+        tool_name: str = "",
+        elapsed: float | None = None,
+        thinking_notes: list[str] | None = None,
     ) -> None:
-        safe_value = value if len(value) <= 1200 else value[:1200] + "..."
-        log_text = "\n".join(log[-8:])
-        if len(log_text) > 1800:
-            log_text = log_text[-1800:]
-        text = (
-            f"<b>{html.escape(title)}</b>\n"
-            f"<code>{html.escape(safe_value)}</code>\n\n"
-            f"<blockquote expandable><b>Agent Log</b>\n{html.escape(log_text)}</blockquote>"
+        text = self._render_tool_display(
+            title=title,
+            tool_name=tool_name,
+            value=value,
+            log=log,
+            elapsed=elapsed,
+            thinking_notes=thinking_notes,
         )
         try:
-            await self.edit(event, text, as_html=True)
+            buttons = getattr(event, "_openagent_status_buttons", None)
+            if buttons is not None and hasattr(event, "edit"):
+                await event.edit(text, buttons=buttons, parse_mode="html")
+            else:
+                await self.edit(event, text, as_html=True)
         except Exception:
             await self.edit(event, html.escape(title), as_html=True)
+
+    @callback(ttl=900)
+    async def _activate_inline_status(self, call: events.CallbackQuery.Event, token: str | None = None) -> None:
+        if token:
+            future = self._inline_status_waiters.get(token)
+            if future is not None and not future.done():
+                future.set_result(call)
+        with contextlib.suppress(Exception):
+            await call.answer()
+
+    async def _start_inline_status(
+        self,
+        event: Any,
+        text: str,
+        buttons: list[list[Any]],
+    ) -> Any:
+        chat_id = getattr(event, "chat_id", None)
+        if chat_id is None:
+            return await self.edit(event, text, as_html=True)
+
+        token = str(uuid.uuid4())
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        self._inline_status_waiters[token] = future
+        try:
+            _unit, sms = await self.inline(
+                chat_id,
+                text,
+                buttons=[[self.Button.inline(" ", self._activate_inline_status, args=(token,))]],
+                ttl=900,
+                parse_mode="html",
+            )
+            if sms:
+                with contextlib.suppress(Exception):
+                    await sms.click(0)
+            try:
+                call = await asyncio.wait_for(future, timeout=5)
+            except asyncio.TimeoutError:
+                call = sms or event
+            if hasattr(call, "edit"):
+                with contextlib.suppress(Exception):
+                    await call.edit(text, buttons=buttons, parse_mode="html")
+            with contextlib.suppress(Exception):
+                setattr(call, "_openagent_status_buttons", buttons)
+            with contextlib.suppress(Exception):
+                setattr(call, "_openagent_source_chat_id", chat_id)
+            with contextlib.suppress(Exception):
+                await event.delete()
+            return call or sms or event
+        except Exception:
+            return await self.edit(event, text, as_html=True)
+        finally:
+            self._inline_status_waiters.pop(token, None)
 
 
     async def _ask_agent(
@@ -2136,7 +2929,8 @@ class OpenAgent(ModuleBase):
         attachments: list[dict[str, str]] | None = None,
         cancel_token: str | None = None,
         system_override: str | None = None,
-    ) -> tuple[str, list[str]]:
+        started_at: float | None = None,
+    ) -> tuple[str, list[str], list[str]]:
         provider = self._provider()
         if provider == "ollama.cloud":
             raise RuntimeError(self.strings("disabled", provider=self.PROVIDER_LABELS[provider]))
@@ -2152,8 +2946,9 @@ class OpenAgent(ModuleBase):
             user_content = self._build_openai_content(prompt, attachments)
 
         chat_id = getattr(source_event, "chat_id", None) if source_event is not None else None
+        compacted_context = await self._compact_chat_history_if_needed(chat_id, provider, api_key)
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_override or self._system_prompt()}
+            {"role": "system", "content": system_override or self._system_prompt(prompt)}
         ]
         tool_memory = self._tool_memory_prompt(chat_id)
         if tool_memory:
@@ -2162,8 +2957,58 @@ class OpenAgent(ModuleBase):
         messages.append({"role": "user", "content": user_content})
 
         agent_log: list[str] = []
-        max_steps = 15  # Architectural limit for tool chaining in 0.5.0
+        if compacted_context:
+            agent_log.append("context.compact")
+        thinking_notes: list[str] = []
+        max_steps = self.AGENT_MAX_STEPS  # Architectural limit for tool chaining in 0.5.0
+        invalid_tool_retries = 0
         answer = ""
+
+        if cancel_token and cancel_token in self._cancelled_generations:
+            raise RuntimeError("Generation cancelled")
+        think_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._thinking_system_prompt()}
+        ]
+        think_messages.extend(self._history_for_chat(chat_id))
+        think_messages.append({"role": "user", "content": user_content})
+        if provider in ("openai", "other"):
+            think_answer = await self._ask_openai_compatible(provider, think_messages, api_key)
+        elif provider == "google":
+            think_answer = await self._ask_google(think_messages, api_key)
+        else:
+            raise RuntimeError(self.strings("bad_provider", providers=", ".join(self.PROVIDERS)))
+
+        think_calls = [
+            call
+            for call in self._extract_tool_calls(think_answer or "")
+            if (call[0] or "").lower().strip() == "thinking.note"
+        ]
+        if not think_calls:
+            fallback_note = re.sub(r"```.*?```", " ", think_answer or "", flags=re.DOTALL).strip()
+            think_calls = [("thinking.note", "", fallback_note or "Понял задачу, начинаю выполнение.")]
+        thinking_outputs: list[str] = []
+        for tool_name, attrs_raw, body in think_calls[:1]:
+            if cancel_token and cancel_token in self._cancelled_generations:
+                raise RuntimeError("Generation cancelled")
+            output = await self._dispatch_tool(
+                tool_name,
+                attrs_raw,
+                body,
+                source_event,
+                status_event,
+                agent_log,
+                started_at=started_at,
+                thinking_notes=thinking_notes,
+            )
+            self._remember_tool_output(chat_id, tool_name, output)
+            thinking_outputs.append(f"Tool <{tool_name}> output:\n{output}")
+        messages.append({"role": "assistant", "content": think_answer or ""})
+        messages.append(
+            {
+                "role": "user",
+                "content": "\n\n".join(thinking_outputs) + "\n\nNow proceed with the actual task.",
+            }
+        )
 
         for _ in range(max_steps):
             if cancel_token and cancel_token in self._cancelled_generations:
@@ -2176,29 +3021,64 @@ class OpenAgent(ModuleBase):
             else:
                 raise RuntimeError(self.strings("bad_provider", providers=", ".join(self.PROVIDERS)))
 
-            match = self.TOOL_CALL_RE.search(answer or "")
-            if not match:
-                return (answer or "").strip(), agent_log
+            tool_calls = self._extract_tool_calls(answer or "")
+            if not tool_calls:
+                tool_error = self._invalid_tool_call_error(answer or "")
+                if tool_error:
+                    invalid_tool_retries += 1
+                    if invalid_tool_retries > 2:
+                        return tool_error, agent_log, thinking_notes
+                    messages.append({"role": "assistant", "content": answer or ""})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"{tool_error}\n\n"
+                                "Fix the tool call and try again now. Use only valid OpenAgent tool names, "
+                                "valid JSON, and args as a JSON object. If no tool is needed, answer the user "
+                                "in plain text with no JSON/tool_call."
+                            ),
+                        }
+                    )
+                    continue
+                clean_answer = (answer or "").strip()
+                if clean_answer or not agent_log:
+                    return clean_answer, agent_log, thinking_notes
+                break
+            invalid_tool_retries = 0
 
-            # Extract tool name and content
-            # TOOL_CALL_RE = re.compile(r"<([a-z0-9._]+)([^>]*)>(.*?)</>|<([a-z0-9._]+)([^>]*)/?>")
-            if match.group(1): # Block format <tool>...</tool>
-                tool_name, attrs_raw, body = match.group(1), match.group(2), match.group(3)
-            else: # Self-closing format <tool/>
-                tool_name, attrs_raw, body = match.group(4), match.group(5), ""
-
-            output = await self._dispatch_tool(tool_name, attrs_raw, body, source_event, status_event, agent_log)
-            self._remember_tool_output(chat_id, tool_name, output)
+            outputs: list[str] = []
+            for tool_name, attrs_raw, body in tool_calls:
+                if cancel_token and cancel_token in self._cancelled_generations:
+                    raise RuntimeError("Generation cancelled")
+                output = await self._dispatch_tool(
+                    tool_name,
+                    attrs_raw,
+                    body,
+                    source_event,
+                    status_event,
+                    agent_log,
+                    started_at=started_at,
+                    thinking_notes=thinking_notes,
+                )
+                self._remember_tool_output(chat_id, tool_name, output)
+                outputs.append(f"Tool <{tool_name}> output:\n{output}")
             
             messages.append({"role": "assistant", "content": answer})
-            messages.append({"role": "user", "content": f"Tool <{tool_name}> output:\n{output}"})
+            followup = "\n\n".join(outputs)
+            if any(name != "thinking.note" for name, _attrs, _body in tool_calls):
+                followup += (
+                    "\n\nProgress reminder: if you need more tools, include a fresh thinking.note "
+                    "with the next tool_call batch unless the task is ready for the final answer."
+                )
+            messages.append({"role": "user", "content": followup})
         # Force one final pass without tool calls if tool-chain limit was reached.
         messages.append(
             {
                 "role": "user",
                 "content": (
                     "Stop using tools. Give the final user-facing answer now, in plain text only. "
-                    "Do not output XML tags or tool calls."
+                    "Do not output tool_call fenced blocks, XML tags, or tool calls."
                 ),
             }
         )
@@ -2209,9 +3089,152 @@ class OpenAgent(ModuleBase):
         else:
             raise RuntimeError(self.strings("bad_provider", providers=", ".join(self.PROVIDERS)))
         clean = (answer or "").strip()
+        if not clean and provider in ("openai", "other") and self._uses_completion_tokens(provider):
+            max_tokens = int(self.config["max_tokens"])
+            if int(self._last_token_usage.get("output_tokens", 0) or 0) >= max_tokens:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous final answer was empty because the completion budget was exhausted. "
+                            "Answer now in 800 characters or less. Plain text only. No tools."
+                        ),
+                    }
+                )
+                answer = await self._ask_openai_compatible(
+                    provider,
+                    messages,
+                    api_key,
+                    max_tokens_override=max(4096, max_tokens * 2),
+                )
+                clean = (answer or "").strip()
         if clean:
-            return clean, agent_log
-        return "Инструменты выполнены, но модель не сформировала финальный текст.", agent_log
+            return clean, agent_log, thinking_notes
+        return "Инструменты выполнены, но модель не сформировала финальный текст.", agent_log, thinking_notes
+
+    def _tool_names(self) -> set[str]:
+        """Single whitelist source for executable tool names and aliases."""
+        return set(self._get_tool_map())
+
+    def _json_tool_to_legacy(self, payload: dict[str, Any]) -> tuple[str, str, str] | None:
+        """Convert the new JSON tool protocol into legacy attrs/body for handlers."""
+        tool_name = str(payload.get("tool") or payload.get("name") or "").lower().strip()
+        if tool_name not in self._tool_names():
+            return None
+        args_raw = payload.get("args") or {}
+        if not isinstance(args_raw, dict):
+            args_raw = {}
+        body_value = payload.get("body")
+        if body_value is None:
+            for key in ("body", "content", "text", "message", "command", "query", "prompt"):
+                if key in args_raw:
+                    body_value = args_raw.get(key)
+                    break
+        body = "" if body_value is None else str(body_value)
+        attrs: list[str] = []
+        for key, value in args_raw.items():
+            if value is None or key == "body":
+                continue
+            if isinstance(value, (dict, list, tuple)):
+                value = json.dumps(value, ensure_ascii=False)
+            safe_key = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(key).strip())
+            if not safe_key:
+                continue
+            attrs.append(f'{safe_key}="{html.escape(str(value), quote=True)}"')
+        return tool_name, " ".join(attrs), body
+
+    def _extract_json_tool_calls(self, text: str) -> list[tuple[str, str, str]]:
+        calls: list[tuple[str, str, str]] = []
+        stripped = (text or "").strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                payload = json.loads(stripped)
+            except Exception:
+                payload = None
+            payloads = payload if isinstance(payload, list) else [payload]
+            for item in payloads:
+                if not isinstance(item, dict):
+                    continue
+                tool_call = self._json_tool_to_legacy(item)
+                if tool_call:
+                    calls.append(tool_call)
+        for match in self.TOOL_CALL_JSON_RE.finditer(text or ""):
+            raw = match.group(1).strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            payloads = payload if isinstance(payload, list) else [payload]
+            for item in payloads:
+                if not isinstance(item, dict):
+                    continue
+                tool_call = self._json_tool_to_legacy(item)
+                if tool_call:
+                    calls.append(tool_call)
+        return calls
+
+    def _invalid_tool_call_error(self, text: str) -> str:
+        """Return a user-facing error when the model attempted an invalid tool call."""
+        raw_items: list[str] = []
+        stripped = (text or "").strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            raw_items.append(stripped)
+        raw_items.extend(match.group(1).strip() for match in self.TOOL_CALL_JSON_RE.finditer(text or ""))
+        for raw in raw_items:
+            try:
+                payload = json.loads(raw)
+            except Exception as exc:
+                return f"Ошибка tool call: модель вернула некорректный JSON ({exc})."
+            payloads = payload if isinstance(payload, list) else [payload]
+            for item in payloads:
+                if not isinstance(item, dict):
+                    return "Ошибка tool call: элемент вызова инструмента должен быть JSON-объектом."
+                tool_name = str(item.get("tool") or item.get("name") or "").lower().strip()
+                if not tool_name:
+                    continue
+                if tool_name not in self._tool_names():
+                    available = ", ".join(sorted(self._tool_names())[:30])
+                    return f"Ошибка tool call: неизвестный инструмент '{tool_name}'. Доступные примеры: {available}."
+                args_raw = item.get("args") or {}
+                if not isinstance(args_raw, dict):
+                    return f"Ошибка tool call: args для '{tool_name}' должен быть JSON-объектом."
+        return ""
+
+    def _extract_json_tool_call(self, text: str) -> tuple[str, str, str] | None:
+        calls = self._extract_json_tool_calls(text)
+        return calls[0] if calls else None
+
+    def _extract_xml_tool_calls(self, text: str) -> list[tuple[str, str, str]]:
+        """Return executable XML fallback calls, ignoring ordinary HTML/XML tags."""
+        tool_names = self._tool_names()
+        calls: list[tuple[str, str, str]] = []
+        for match in self.TOOL_CALL_RE.finditer(text or ""):
+            if match.group(1):
+                tool_name, attrs_raw, body = match.group(1), match.group(2), match.group(3)
+            else:
+                tool_name, attrs_raw, body = match.group(4), match.group(5), ""
+            tool_name = (tool_name or "").lower().strip()
+            if tool_name in tool_names:
+                calls.append((tool_name, attrs_raw or "", body or ""))
+        return calls
+
+    def _extract_xml_tool_call(self, text: str) -> tuple[str, str, str] | None:
+        calls = self._extract_xml_tool_calls(text)
+        return calls[0] if calls else None
+
+    def _extract_tool_calls(self, text: str) -> list[tuple[str, str, str]]:
+        """Return executable tool calls; JSON protocol first, XML fallback second."""
+        calls = self._extract_json_tool_calls(text)
+        if calls:
+            return calls
+        return self._extract_xml_tool_calls(text)
+
+    def _extract_tool_call(self, text: str) -> tuple[str, str, str] | None:
+        """Return the first executable tool call; kept for compatibility."""
+        calls = self._extract_tool_calls(text)
+        return calls[0] if calls else None
 
     def _agent_log_html(self, log: list[str]) -> str:
         if not log:
@@ -2255,6 +3278,8 @@ class OpenAgent(ModuleBase):
         provider: str,
         messages: list[dict[str, str]],
         api_key: str,
+        *,
+        max_tokens_override: int | None = None,
     ) -> str:
         base_url = self._base_url(provider)
         if not base_url:
@@ -2265,10 +3290,11 @@ class OpenAgent(ModuleBase):
             "messages": messages,
             "temperature": float(self.config["temperature"]),
         }
+        max_tokens = int(max_tokens_override or self.config["max_tokens"])
         if self._uses_completion_tokens(provider):
-            payload["max_completion_tokens"] = int(self.config["max_tokens"])
+            payload["max_completion_tokens"] = max_tokens
         else:
-            payload["max_tokens"] = int(self.config["max_tokens"])
+            payload["max_tokens"] = max_tokens
 
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         try:
@@ -2300,7 +3326,13 @@ class OpenAgent(ModuleBase):
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError(f"Unexpected {provider} response: {data}") from exc
 
-    async def _ask_google(self, messages: list[dict[str, str]], api_key: str) -> str:
+    async def _ask_google(
+        self,
+        messages: list[dict[str, str]],
+        api_key: str,
+        *,
+        max_tokens_override: int | None = None,
+    ) -> str:
         model = self._model("google")
         url = f"{self._base_url('google')}/models/{model}:generateContent?key={api_key}"
         system_text = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
@@ -2316,7 +3348,7 @@ class OpenAgent(ModuleBase):
             "contents": contents,
             "generationConfig": {
                 "temperature": float(self.config["temperature"]),
-                "maxOutputTokens": int(self.config["max_tokens"]),
+                "maxOutputTokens": int(max_tokens_override or self.config["max_tokens"]),
             },
         }
         if system_text:
@@ -2336,19 +3368,26 @@ class OpenAgent(ModuleBase):
         *,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                text = await resp.text()
-                if resp.status >= 400:
-                    raise RuntimeError(f"HTTP {resp.status}: {text[:800]}")
-                try:
-                    return await resp.json()
-                except Exception as exc:
-                    raise RuntimeError(f"Invalid JSON response: {text[:800]}") from exc
+        timeout_seconds = int(self.config["timeout"])
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    text = await resp.text()
+                    if resp.status >= 400:
+                        raise RuntimeError(f"HTTP {resp.status}: {text[:800]}")
+                    try:
+                        return await resp.json()
+                    except Exception as exc:
+                        raise RuntimeError(f"Invalid JSON response: {text[:800]}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Provider request timed out after {timeout_seconds}s. "
+                "Increase OpenAgent timeout or use a faster model for this task."
+            ) from exc
 
     def _format_inline_markdown(self, text: str) -> str:
-        text = html.escape(text)
+        text = html.escape(html.unescape(text or ""))
         text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
         text = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", text)
         text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", text)
@@ -2361,7 +3400,7 @@ class OpenAgent(ModuleBase):
         for match in pattern.finditer(text or ""):
             parts.append(self._format_inline_markdown(text[pos : match.start()]))
             lang = match.group(1).strip()
-            code = html.escape(match.group(2).strip("\n"))
+            code = html.escape(html.unescape(match.group(2).strip("\n")))
             if lang:
                 parts.append(f'<pre language="{html.escape(lang)}">{code}</pre>')
             else:
@@ -2388,25 +3427,38 @@ class OpenAgent(ModuleBase):
         prompt: str,
         answer: str,
         agent_log: list[str],
+        thinking_notes: list[str] | None = None,
         buttons: list[list[Any]] | None = None,
     ) -> None:
         content = f"{title}\n\nЗапрос:\n{prompt}\n\nОтвет:\n{answer}"
+        content += "\n\nThinking:\n" + self._format_thinking_notes(thinking_notes)
         if agent_log:
             content += "\n\nAgent Log:\n" + "\n".join(agent_log)
-        buf = io.BytesIO(content.encode("utf-8"))
-        buf.name = "openagent_answer.txt"
+        data = content.encode("utf-8")
+
+        def make_buf() -> io.BytesIO:
+            buf = io.BytesIO(data)
+            buf.name = "openagent_answer.txt"
+            return buf
+
         caption = f"{title}\n\n<b>Ответ слишком длинный, отправляю файлом.</b>"
-        chat_id = getattr(event, "chat_id", None)
+        chat_id = getattr(event, "_openagent_source_chat_id", None) or getattr(event, "chat_id", None)
+        sent = False
+        last_error: Exception | None = None
         if chat_id is not None:
             try:
                 await self.client.send_file(
                     chat_id,
-                    buf,
+                    make_buf(),
                     caption=caption,
                     parse_mode="html",
                 )
-            except Exception:
-                await self.client.send_file(chat_id, buf, caption="OpenAgent answer")
+                sent = True
+            except Exception as exc:
+                last_error = exc
+                with contextlib.suppress(Exception):
+                    await self.client.send_file(chat_id, make_buf(), caption="OpenAgent answer")
+                    sent = True
             if buttons:
                 with contextlib.suppress(Exception):
                     await self.inline(
@@ -2416,9 +3468,18 @@ class OpenAgent(ModuleBase):
                         ttl=900,
                         parse_mode="html",
                     )
-        else:
-            if hasattr(event, "reply"):
-                await self.reply(event, caption, file=buf, as_html=True)
+        if not sent and hasattr(event, "reply"):
+            with contextlib.suppress(Exception):
+                await self.reply(event, caption, file=make_buf(), as_html=True)
+                sent = True
+        if not sent:
+            error = f"\n\n<code>{html.escape(str(last_error)[:500])}</code>" if last_error else ""
+            fallback = html.escape(content[:3000])
+            await self.edit(
+                event,
+                f"{caption}\n\n<b>Не удалось отправить файл, показываю начало:</b>{error}\n\n<blockquote expandable>{fallback}</blockquote>",
+                as_html=True,
+            )
 
     async def _reply_text(
         self,
@@ -2428,17 +3489,26 @@ class OpenAgent(ModuleBase):
         title: str = "OpenAgent",
         prompt: str = "",
         agent_log: list[str] | None = None,
+        thinking_notes: list[str] | None = None,
         buttons: list[list[Any]] | None = None,
         edit_current: bool = False,
     ) -> None:
         text = self._sanitize_answer(text or "")
         formatted = self._format_agent_markdown(text)
         formatted_prompt = self._format_agent_markdown(prompt or "")
-        request_label = self._request_label()
-        response_label = self._response_label()
+        request_label = self._request_label(thinking_notes=thinking_notes)
+        response_label = self._response_label(thinking_notes=thinking_notes)
         agent_log_html = self._agent_log_html(agent_log or [])
         if len(formatted) + len(formatted_prompt) + len(agent_log_html) > 3500:
-            await self._send_answer_file(event, title, prompt, text or "", agent_log or [], buttons)
+            await self._send_answer_file(
+                event,
+                title,
+                prompt,
+                text or "",
+                agent_log or [],
+                thinking_notes,
+                buttons,
+            )
             return
         chunks = [formatted[i : i + 3500] for i in range(0, len(formatted), 3500)] or [""]
         for index, chunk in enumerate(chunks):
@@ -2559,26 +3629,36 @@ class OpenAgent(ModuleBase):
                 parse_mode="html",
             )
             loading = edited if edited and not isinstance(edited, bool) else event
+            with contextlib.suppress(Exception):
+                setattr(loading, "_openagent_status_buttons", [[cancel_button]])
+            with contextlib.suppress(Exception):
+                setattr(loading, "_openagent_source_chat_id", payload.get("chat_id"))
         except Exception:
             loading = event
 
         started = time.monotonic()
         try:
-            answer, agent_log = await self._ask_agent(
+            answer, agent_log, thinking_notes = await self._ask_agent(
                 payload["full_prompt"],
                 status_event=loading or event,
                 source_event=event,
                 attachments=payload.get("attachments") or [],
                 cancel_token=cancel_token,
+                started_at=started,
             )
             elapsed = time.monotonic() - started
             self._remember_context(payload.get("chat_id"), payload["full_prompt"], answer)
             await self._reply_text(
                 loading or event,
                 answer,
-                title=self._response_title(elapsed),
+                title=self._response_title(
+                    elapsed,
+                    tool_count=len(agent_log),
+                    thinking_notes=thinking_notes,
+                ),
                 prompt=payload["prompt"],
                 agent_log=agent_log,
+                thinking_notes=thinking_notes,
                 buttons=self._final_buttons(
                     payload.get("chat_id"),
                     payload["prompt"],
@@ -2588,10 +3668,6 @@ class OpenAgent(ModuleBase):
                 edit_current=True,
             )
             self._cancelled_generations.discard(cancel_token)
-            try:
-                await (loading or event).delete()
-            except Exception:
-                pass
         except Exception as exc:
             self._cancelled_generations.discard(cancel_token)
             await self.kernel.handle_error(exc, source="OpenAgent:regenerate", event=event)
@@ -2619,23 +3695,20 @@ class OpenAgent(ModuleBase):
 
         cancel_token = str(uuid.uuid4())
         cancel_button = self._direct_button("Отмена", "cancel", {"token": cancel_token})
-        try:
-            edited = await event.edit(
-                self._thinking_text(),
-                buttons=[[cancel_button]],
-                parse_mode="html",
-            )
-            loading = edited if edited and not isinstance(edited, bool) else event
-        except Exception:
-            loading = await self.edit(event, self._thinking_text())
+        loading = await self._start_inline_status(
+            event,
+            self._thinking_text(),
+            [[cancel_button]],
+        )
         started = time.monotonic()
         try:
-            answer, agent_log = await self._ask_agent(
+            answer, agent_log, thinking_notes = await self._ask_agent(
                 full_prompt,
                 status_event=loading or event,
                 source_event=event,
                 attachments=attachments,
                 cancel_token=cancel_token,
+                started_at=started,
             )
             self._last_request_at = time.time()
             elapsed = time.monotonic() - started
@@ -2643,21 +3716,23 @@ class OpenAgent(ModuleBase):
             await self._reply_text(
                 loading or event,
                 answer,
-                title=self._response_title(elapsed),
+                title=self._response_title(
+                    elapsed,
+                    tool_count=len(agent_log),
+                    thinking_notes=thinking_notes,
+                ),
                 prompt=prompt,
                 agent_log=agent_log,
+                thinking_notes=thinking_notes,
                 buttons=self._final_buttons(
                     getattr(event, "chat_id", None),
                     prompt,
                     full_prompt,
                     attachments,
                 ),
+                edit_current=True,
             )
             self._cancelled_generations.discard(cancel_token)
-            try:
-                await (loading or event).delete()
-            except Exception:
-                pass
         except Exception as exc:
             self._cancelled_generations.discard(cancel_token)
             await self.kernel.handle_error(exc, source="OpenAgent", event=event)
@@ -2667,59 +3742,18 @@ class OpenAgent(ModuleBase):
                 as_html=True,
             )
 
-    @command("code", doc_ru="<запрос> сгенерировать код файлом", doc_en="<prompt> generate code file")
-    async def cmd_code(self, event: events.NewMessage.Event) -> None:
-        prompt = self._args_raw(event)
-        if not prompt:
-            await self.edit(event, "Usage: .code <request>")
-            return
-
-        try:
-            loading = await event.edit("<b>🧬 Пишу код...</b>", parse_mode="html")
-        except Exception:
-            loading = await self.edit(event, "<b>🧬 Пишу код...</b>", as_html=True)
-
-        try:
-            docs = await self._fetch_mcub_docs()
-            system = (
-                "You are a senior software engineer and MCUB module developer. "
-                "Generate exactly one complete source file for the user's request. "
-                "If the request is for a MCUB module, use the MCUB documentation below and produce production-ready MCUB code. "
-                "Choose the best filename and extension yourself. "
-                "Return ONLY this exact wrapper and raw code inside it, with no explanations, no Markdown fences, no comments outside code:\n"
-                "<file name=\"chosen_filename.ext\">\n...code...\n</file>\n\n"
-                f"MCUB documentation:\n{docs}"
-            )
-            answer, _agent_log = await self._ask_agent(
-                prompt,
-                status_event=loading or event,
-                source_event=None,
-                system_override=system,
-            )
-            filename, code = self._extract_generated_file(answer)
-            if not code:
-                raise RuntimeError("model returned empty code")
-            buf = io.BytesIO(code.encode("utf-8"))
-            buf.name = filename
-            await self.client.send_file(
-                event.chat_id,
-                buf,
-                caption=f"<b>🧬 Code:</b> <code>{html.escape(filename)}</code>",
-                parse_mode="html",
-                reply_to=getattr(event, "id", None),
-            )
-            with contextlib.suppress(Exception):
-                await (loading or event).delete()
-        except Exception as exc:
-            await self.kernel.handle_error(exc, source="OpenAgent:code", event=event)
-            await self.edit(
-                loading or event,
-                html.escape(self.strings("error", error=str(exc))),
-                as_html=True,
-            )
-
     @command("skills", doc_ru="список скиллов OpenAgent", doc_en="list OpenAgent skills")
     async def cmd_skills(self, event: events.NewMessage.Event) -> None:
+        arg = self._args_raw(event)
+        if arg in {"-repo", "--repo", "repo"}:
+            try:
+                text = await self._format_skill_repo_list()
+            except Exception as exc:
+                await self.edit(event, html.escape(self.strings("error", error=str(exc))), as_html=True)
+                return
+            await self.edit(event, "<pre>" + html.escape(text) + "</pre>", as_html=True)
+            return
+
         skills = self._list_skills()
         if not skills:
             await self.edit(event, "No OpenAgent skills installed")
@@ -2727,12 +3761,31 @@ class OpenAgent(ModuleBase):
         lines = []
         for path in skills:
             try:
-                first_line = path.read_text(encoding="utf-8").splitlines()[0]
+                text = path.read_text(encoding="utf-8")
+                first_line = text.splitlines()[0] if text.splitlines() else ""
+                frontmatter_name = re.search(r"^name:\s*(.+)$", text, flags=re.MULTILINE)
+                frontmatter_description = re.search(r"^description:\s*(.+)$", text, flags=re.MULTILINE)
             except Exception:
                 first_line = ""
-            title = first_line.lstrip("# ").strip() if first_line.startswith("#") else path.stem
-            lines.append(f"- {path.stem}: {title}")
+                frontmatter_name = None
+                frontmatter_description = None
+            name = frontmatter_name.group(1).strip() if frontmatter_name else self._skill_name_from_path(path)
+            title = frontmatter_description.group(1).strip() if frontmatter_description else first_line.lstrip("# ").strip() if first_line.startswith("#") else name
+            lines.append(f"- {name}: {title}")
         await self.edit(event, "<pre>" + html.escape("\n".join(lines)) + "</pre>", as_html=True)
+
+    @command("skillinstall", alias=["ssinstall"], doc_ru="<name> установить OpenAgent skill из repo", doc_en="<name> install OpenAgent skill from repo")
+    async def cmd_skillinstall(self, event: events.NewMessage.Event) -> None:
+        name = self._args_raw(event)
+        if not name:
+            await self.edit(event, "Usage: .skillinstall <skill_name>")
+            return
+        try:
+            saved_name = await self._install_repo_skill(name)
+        except Exception as exc:
+            await self.edit(event, html.escape(self.strings("error", error=str(exc))), as_html=True)
+            return
+        await self.edit(event, f"Skill installed: <code>{html.escape(saved_name)}</code>", as_html=True)
 
     @command("sendss", doc_ru="<name> отправить .md скилл", doc_en="<name> send skill .md")
     async def cmd_sendss(self, event: events.NewMessage.Event) -> None:
@@ -2740,14 +3793,14 @@ class OpenAgent(ModuleBase):
         if not name:
             await self.edit(event, "Usage: .sendss <skill_name>")
             return
-        path = self._skill_path(name)
+        path = self._find_skill_path(name)
         if not path.exists():
             await self.edit(event, "Skill not found")
             return
         await self.client.send_file(
             event.chat_id,
             str(path),
-            caption=f"<b>Skill:</b> <code>{html.escape(path.stem)}</code>",
+            caption=f"<b>Skill:</b> <code>{html.escape(self._skill_name_from_path(path))}</code>",
             parse_mode="html",
         )
         try:
@@ -2785,7 +3838,7 @@ class OpenAgent(ModuleBase):
                 match = re.search(r"^#\s+(.+)$", content, flags=re.MULTILINE)
                 name = match.group(1).strip() if match else "skill"
 
-        saved_name = await self._save_skill(name, content)
+        saved_name = self._save_skill(name, content)
         await self.edit(event, f"Skill imported: <code>{html.escape(saved_name)}</code>", as_html=True)
 
     @command("delss", doc_ru="<name> удалить скилл", doc_en="<name> delete skill")
@@ -2794,12 +3847,17 @@ class OpenAgent(ModuleBase):
         if not name:
             await self.edit(event, "Usage: .delss <skill_name>")
             return
-        path = self._skill_path(name)
+        path = self._find_skill_path(name)
         if not path.exists():
             await self.edit(event, "Skill not found")
             return
         path.unlink()
-        await self.edit(event, f"Skill deleted: <code>{html.escape(path.stem)}</code>", as_html=True)
+        try:
+            if path.name == "SKILL.md" and not any(path.parent.iterdir()):
+                path.parent.rmdir()
+        except Exception:
+            pass
+        await self.edit(event, f"Skill deleted: <code>{html.escape(self._skill_name_from_path(path))}</code>", as_html=True)
 
 
     def _tool_attr_or_body(self, attrs_raw: str, body: str, *keys: str) -> str:
@@ -2829,6 +3887,7 @@ class OpenAgent(ModuleBase):
         return await self._run_terminal(body.strip())
 
     async def _file_read_text_tool(self, attrs_raw: str, body: str) -> str:
+        await asyncio.sleep(0)
         path_raw = self._tool_attr_or_body(attrs_raw, body, "path", "file", "name")
         if not path_raw:
             return "File path is required"
@@ -2843,15 +3902,24 @@ class OpenAgent(ModuleBase):
             return f"Could not read file: {exc}"
 
     async def _skills_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        await asyncio.sleep(0)
         attrs = self._parse_xml_attrs(attrs_raw)
         if tool_name == "skills.list":
             skills = self._list_skills()
-            return "\n".join(path.stem for path in skills) or "No OpenAgent skills installed"
+            return "\n".join(self._skill_name_from_path(path) for path in skills) or "No OpenAgent skills installed"
+        if tool_name == "skills.repo_list":
+            return await self._format_skill_repo_list()
+        if tool_name == "skills.install":
+            name = attrs.get("name") or body.strip()
+            if not name:
+                return "skill name is required"
+            saved = await self._install_repo_skill(name)
+            return f"Skill installed: {saved}"
         if tool_name in {"skills.read", "skills.export_md"}:
             name = attrs.get("name") or body.strip()
             if not name:
                 return "skill name is required"
-            path = self._skill_path(name)
+            path = self._find_skill_path(name)
             if not path.exists():
                 return "Skill not found"
             return path.read_text(encoding="utf-8", errors="replace")[:12000]
@@ -2859,7 +3927,7 @@ class OpenAgent(ModuleBase):
             name = attrs.get("name") or attrs.get("title") or "skill"
             if not body.strip():
                 return "skill content is empty"
-            saved = await self._save_skill(name, body)
+            saved = self._save_skill(name, body)
             return f"Skill saved: {saved}"
         return f"Unknown skills tool: {tool_name}"
 
@@ -2883,6 +3951,7 @@ class OpenAgent(ModuleBase):
         return f"Unknown context tool: {tool_name}"
 
     async def _utility_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        await asyncio.sleep(0)
         if tool_name == "utility.placeholders":
             return self._format_placeholders()
         if tool_name == "utility.random_template":
@@ -2895,6 +3964,36 @@ class OpenAgent(ModuleBase):
         if tool_name == "utility.error_file":
             return "Errors are reported through the MCUB kernel error handler"
         return f"Unknown utility tool: {tool_name}"
+
+    async def _thinking_note_tool(self, attrs_raw: str, body: str) -> str:
+        await asyncio.sleep(0)
+        note = self._thinking_note_text(attrs_raw, body)
+        if not note:
+            return "Thinking note recorded."
+        return "Thinking note: " + note[:1200]
+
+    def _thinking_note_text(self, attrs_raw: str, body: str) -> str:
+        attrs = self._parse_xml_attrs(attrs_raw)
+        text = (body or attrs.get("text") or attrs.get("note") or "").strip()
+        text = re.sub(r"^```(?:tool_call|json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        if text.startswith("{"):
+            try:
+                payload = json.loads(text)
+                if isinstance(payload, dict):
+                    args = payload.get("args") or {}
+                    if isinstance(args, dict):
+                        text = str(
+                            args.get("note")
+                            or args.get("text")
+                            or payload.get("note")
+                            or payload.get("text")
+                            or text
+                        ).strip()
+                    else:
+                        text = str(payload.get("note") or payload.get("text") or text).strip()
+            except Exception:
+                pass
+        return text
 
 
     def _get_tool_map(self) -> dict[str, str]:
@@ -2934,6 +4033,8 @@ class OpenAgent(ModuleBase):
             "skills.import_md": "_skills_registry_tool",
             "skills.export_md": "_skills_registry_tool",
             "skills.save_from_ai": "_skills_registry_tool",
+            "skills.install": "_skills_registry_tool",
+            "skills.repo_list": "_skills_registry_tool",
             "chat": "_chat_tool",
             "chat.info": "_chat_tool",
             "chat.participants": "_chat_tool",
@@ -2959,6 +4060,7 @@ class OpenAgent(ModuleBase):
             "message.history": "_history_tool",
             "search_messages": "_search_messages_tool",
             "message.search": "_search_messages_tool",
+            "chat.search": "_search_messages_tool",
             "update_profile": "_update_profile_tool",
             "profile.update": "_update_profile_tool",
             "profile.update_name": "_update_profile_tool",
@@ -3034,6 +4136,7 @@ class OpenAgent(ModuleBase):
             "context.regenerate": "_context_registry_tool",
             "context.reply_context": "_context_registry_tool",
             "context.media_context": "_context_registry_tool",
+            "thinking.note": "_thinking_note_tool",
             "code.read_docs": "_fetch_mcub_docs",
             "utility.token_usage": "_utility_registry_tool",
             "utility.placeholders": "_utility_registry_tool",
@@ -3042,7 +4145,18 @@ class OpenAgent(ModuleBase):
             "utility.error_file": "_utility_registry_tool",
         }
 
-    async def _dispatch_tool(self, name: str, attrs_raw: str, body: str, source_event: Any, status_event: Any, agent_log: list[str]) -> str:
+    async def _dispatch_tool(
+        self,
+        name: str,
+        attrs_raw: str,
+        body: str,
+        source_event: Any,
+        status_event: Any,
+        agent_log: list[str],
+        *,
+        started_at: float | None = None,
+        thinking_notes: list[str] | None = None,
+    ) -> str:
         name = name.lower().strip()
         tmap = self._get_tool_map()
         misc_aliases = {
@@ -3106,8 +4220,22 @@ class OpenAgent(ModuleBase):
             return f"Error: Tool <{name}> not found in registry."
 
         agent_log.append(name)
+        if name == "thinking.note" and thinking_notes is not None:
+            note = self._thinking_note_text(attrs_raw, body)
+            if note:
+                thinking_notes.append(note[:1200])
         if status_event:
-            await self._show_agent_action(status_event, f"Executing {name}...", attrs_raw or body, agent_log)
+            elapsed = time.monotonic() - started_at if started_at is not None else None
+            display_value = "" if name == "thinking.note" else (attrs_raw or body)
+            await self._show_agent_action(
+                status_event,
+                f"Executing {name}...",
+                display_value,
+                agent_log,
+                tool_name=name,
+                elapsed=elapsed,
+                thinking_notes=thinking_notes,
+            )
             
         try:
             # Normalize arguments based on method signature
@@ -3150,7 +4278,15 @@ class OpenAgent(ModuleBase):
                     "mcub.install": "dlm",
                     "mcub.reload": "restart",
                 }
-                kwargs["command"] = command_map.get(name, "")
+                attrs = self._parse_xml_attrs(attrs_raw)
+                kwargs["command"] = (
+                    command_map.get(name, "")
+                    or attrs.get("command")
+                    or attrs.get("cmd")
+                    or attrs.get("text")
+                    or attrs.get("query")
+                    or ""
+                )
             if method_name == "_save_skill":
                 attrs = self._parse_xml_attrs(attrs_raw)
                 return await self._skills_registry_tool(name, attrs_raw, body or attrs.get("content", ""))
