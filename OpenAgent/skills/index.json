@@ -2,6 +2,41 @@
   "version": 1,
   "skills": [
     {
+      "name": "git-safe-operator",
+      "description": "Inspect git status, diffs, branches, and prepare commits safely while preserving unrelated user changes.",
+      "path": "git-safe-operator/SKILL.md",
+      "keywords": [
+        "git",
+        "status",
+        "diff",
+        "commit",
+        "branch",
+        "stash",
+        "changes",
+        "repo",
+        "коммит",
+        "дифф"
+      ]
+    },
+    {
+      "name": "javascript-typescript-developer",
+      "description": "Build, debug, refactor, and type-check JavaScript and TypeScript code using project conventions and minimal dependencies.",
+      "path": "javascript-typescript-developer/SKILL.md",
+      "keywords": [
+        "javascript",
+        "typescript",
+        "js",
+        "ts",
+        "node",
+        "npm",
+        "pnpm",
+        "yarn",
+        "frontend",
+        "react",
+        "типы"
+      ]
+    },
+    {
       "name": "Mcub-commander",
       "description": "Execute, explain, list, and choose MCUB userbot commands while passing mcub.command arguments without prefixes.",
       "path": "Mcub-commander/SKILL.md",
@@ -33,6 +68,44 @@
         "errors",
         "MCUB0",
         "pytest"
+      ]
+    },
+    {
+      "name": "MCUB-docs-navigator",
+      "description": "Navigate and explain local MCUB documentation while routing module and API questions to the right sources and warning against Hikka assumptions.",
+      "path": "MCUB-docs-navigator/SKILL.md",
+      "keywords": [
+        "docs",
+        "documentation",
+        "doc",
+        "API_DOC.md",
+        "mcub",
+        "api",
+        "module",
+        "modules",
+        "hikka",
+        "справка",
+        "документация"
+      ]
+    },
+    {
+      "name": "MCUB-module-auditor",
+      "description": "Statically audit MCUB modules before release for safety, metadata, dependencies, commands, inline callbacks, and release readiness without editing code.",
+      "path": "MCUB-module-auditor/SKILL.md",
+      "keywords": [
+        "audit",
+        "review",
+        "static",
+        "release",
+        "safety",
+        "secrets",
+        "dependencies",
+        "commands",
+        "inline",
+        "callbacks",
+        "hikka",
+        "аудит",
+        "проверка"
       ]
     },
     {
@@ -85,6 +158,26 @@
       ]
     },
     {
+      "name": "MCUB-runtime-config-manager",
+      "description": "Safely inspect and manage MCUB runtime configuration, prefixes, aliases, trusted users, access rules, and backups with secret masking and confirmations.",
+      "path": "MCUB-runtime-config-manager/SKILL.md",
+      "keywords": [
+        "cfg",
+        "fcfg",
+        "setprefix",
+        "aliases",
+        "trusted",
+        "access",
+        "backup",
+        "config",
+        "settings",
+        "secrets",
+        "runtime",
+        "префикс",
+        "конфиг"
+      ]
+    },
+    {
       "name": "prompt_ui_styler",
       "description": "Adjust OpenAgent appearance, answer layout, thinking/status text, emojis, labels, templates, and config UI safely.",
       "path": "prompt_ui_styler/SKILL.md",
@@ -116,6 +209,40 @@
         "refactor",
         "debug",
         "traceback"
+      ]
+    },
+    {
+      "name": "repository-navigator",
+      "description": "Quickly map unfamiliar repositories, locate files, identify stack conventions, and point code tasks to the right implementation area.",
+      "path": "repository-navigator/SKILL.md",
+      "keywords": [
+        "repo",
+        "repository",
+        "structure",
+        "locate",
+        "find",
+        "architecture",
+        "stack",
+        "files",
+        "навигация",
+        "структура"
+      ]
+    },
+    {
+      "name": "test-and-lint-runner",
+      "description": "Choose and run focused tests, lint, type checks, syntax checks, and builds safely in non-interactive project environments.",
+      "path": "test-and-lint-runner/SKILL.md",
+      "keywords": [
+        "test",
+        "tests",
+        "pytest",
+        "lint",
+        "build",
+        "typecheck",
+        "ruff",
+        "eslint",
+        "vitest",
+        "проверка"
       ]
     }
   ]
