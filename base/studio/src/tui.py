@@ -1,6 +1,6 @@
 # console/studio/tui.py
 """
-MCUB Studio — main TUI class.
+MCUB Studio - main TUI class.
 
 Layout (80 × 24 minimum):
 
@@ -124,7 +124,7 @@ class Studio:
         init_colors()
 
         self._refresh_modules()
-        self._log("MCUB Studio ready  —  press ? for help")
+        self._log("MCUB Studio ready  -  press ? for help")
 
         while True:
             self._H, self._W = stdscr.getmaxyx()
@@ -148,7 +148,7 @@ class Studio:
               
             key = stdscr.getch()
             if key == -1:
-                continue   # timeout — just redraw (spinner animation)
+                continue   # timeout - just redraw (spinner animation)
 
             if self._dispatch(key):
                 return     # quit signal
@@ -186,7 +186,7 @@ class Studio:
         if m == "search":
             return self._search_dispatch(key)
 
-        # List / detail — global quit
+        # List / detail - global quit
         if key == ord("q"):
             if m == "detail":
                 self._mode = "list"
@@ -450,11 +450,11 @@ class Studio:
 
     def _show_help(self) -> None:
         lines = [
-            "=- Navigation:  j/k or ↑↓ move · Enter/→ open detail · ←/Esc back",
-            "=- Module ops:  e=edit · r=reload · u=update from repo · D=delete",
-            "=- Global:      n=new module · /=search repo · R=refresh list · q=quit",
-            "=- Editor:      Ctrl+S save&load · Ctrl+Z undo · Tab=4sp · Ctrl+Q cancel",
-            "=- Search:      type query · Enter search · ↑↓ pick · i=install",
+            "=- Navigation:  j/k or ↑↓ move . Enter/→ open detail . ←/Esc back",
+            "=- Module ops:  e=edit . r=reload . u=update from repo . D=delete",
+            "=- Global:      n=new module . /=search repo . R=refresh list . q=quit",
+            "=- Editor:      Ctrl+S save&load . Ctrl+Z undo . Tab=4sp . Ctrl+Q cancel",
+            "=- Search:      type query . Enter search . ↑↓ pick . i=install",
         ]
         for l in lines:
             self._log(l)

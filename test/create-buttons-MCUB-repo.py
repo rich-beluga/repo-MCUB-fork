@@ -9,12 +9,12 @@ class CreateButtonsMod(ModuleBase):
 
     name = "create-buttons"
     version = "1.0.0"
-    description = {"ru": "создать инлайн кнопки", "en": "create inline buttons"}
+    description = {"ru": "coздaть инлaйн кнoпки", "en": "create inline buttons"}
 
     @command(
         "create-button",
         doc={
-            "ru": "<count> создать X количество кнопок",
+            "ru": "<count> coздaть X кoличecтвo кнoпoк",
             "en": "<count> create X count button(s)",
         },
     )

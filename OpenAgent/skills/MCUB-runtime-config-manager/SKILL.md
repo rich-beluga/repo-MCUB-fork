@@ -13,8 +13,8 @@ keywords:
   - settings
   - secrets
   - runtime
-  - префикс
-  - конфиг
+  - пpeфикc
+  - кoнфиг
 ---
 
 # MCUB Runtime Config Manager

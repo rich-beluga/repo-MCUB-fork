@@ -11,8 +11,8 @@ keywords:
   - module
   - modules
   - hikka
-  - справка
-  - документация
+  - cпpaвкa
+  - дoкyмeнтaция
 ---
 
 # MCUB Docs Navigator

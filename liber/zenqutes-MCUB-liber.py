@@ -4,7 +4,7 @@
 # requires: aiohttp
 # author: @Hairpin00
 # version: 1.4.0
-# description: ru: Получает мудрые цитаты из API / en: Gets wise quotes from API
+# description: ru: Пoлyчaeт мyдpыe цитaты из API / en: Gets wise quotes from API
 # ----------------------- End ------------------------------
 import aiohttp
 import random
@@ -15,10 +15,10 @@ def register(kernel):
 
     strings = {
         'ru': {
-            'searching': '<tg-emoji emoji-id="5116468787377341336">💬</tg-emoji> Ищу мудрые слова...',
-            'api_error': '<tg-emoji emoji-id="5382224089295365367">🫡</tg-emoji> Ошибка при получении цитаты',
-            'fetch_error': '<tg-emoji emoji-id="5382224089295365367">🫡</tg-emoji> Не удалось получить цитату. Проверьте логи.',
-            'network_error': '<tg-emoji emoji-id="5382224089295365367">🫡</tg-emoji> Ошибка сети'
+            'searching': '<tg-emoji emoji-id="5116468787377341336">💬</tg-emoji> Ищy мyдpыe cлoвa...',
+            'api_error': '<tg-emoji emoji-id="5382224089295365367">🫡</tg-emoji> Oшибкa пpи пoлyчeнии цитaты',
+            'fetch_error': '<tg-emoji emoji-id="5382224089295365367">🫡</tg-emoji> He yдaлocь пoлyчить цитaтy. Пpoвepьтe лoги.',
+            'network_error': '<tg-emoji emoji-id="5382224089295365367">🫡</tg-emoji> Oшибкa ceти'
         },
         'en': {
             'searching': '<tg-emoji emoji-id="5116468787377341336">💬</tg-emoji> Searching for wise words...',
@@ -36,13 +36,13 @@ def register(kernel):
                 async with session.get('https://zenquotes.io/api/random') as response:
                     if response.status == 200:
                         data = await response.json()
-                        return f"<tg-emoji emoji-id='5465143921912846619'>💭</tg-emoji> {data[0]['q']}\n— {data[0]['a']}"
+                        return f"<tg-emoji emoji-id='5465143921912846619'>💭</tg-emoji> {data[0]['q']}\n- {data[0]['a']}"
                     return lang_strings['api_error']
         except Exception as e:
             return f"{lang_strings['network_error']}: {str(e)}"
 
     @kernel.register.command('zquote')
-    # Отправляет случайную мудрую цитату
+    # Oтпpaвляeт cлyчaйнyю мyдpyю цитaтy
     async def quote_handler(event):
         try:
             msg = await event.edit(lang_strings['searching'], parse_mode='html')

@@ -7,7 +7,7 @@
 # requires:
 # author: @Fixyres && @Hairpin00
 # version: 2.1.0
-# description: Fheta for MCUB! / Фхета в MCUB! @FHeta_Updates
+# description: Fheta for MCUB! / Фxeтa в MCUB! @FHeta_Updates
 # scop: kernel min v1.1.6
 # banner_url: https://github.com/Fixyres/FModules/blob/main/assets/FHeta/logo.png?raw=true
 # ----------------------- End ------------------------------
@@ -91,35 +91,35 @@ def register(kernel):
     STRINGS = {
         "ru": {
             "lang": "ru",
-            "author": "от",
-            "description": "Описание",
-            "commands": "Команды",
-            "placeholders": "Плейсхолдеры",
-            "morecommands": "...и ещё {remaining} команд.",
-            "moreplaceholders": "...и ещё {remaining} плейсхолдеров.",
-            "list": "Все найденные модули:",
-            "search": "Поиск по запросу {query}...",
-            "noquery": "Введите запрос для поиска, пример: {prefix}fheta запрос",
-            "notfound": "Ничего не найдено по запросу {query}.",
-            "toolong": "Запрос слишком большой, сократите до 168 символов.",
-            "added": "✔ Оценка добавлена!",
-            "changed": "✔ Оценка изменена!",
-            "deleted": "✔ Оценка удалена!",
-            "prompt": "Введите запрос для поиска.",
-            "hint": "Название, команда, описание, автор.",
-            "retry": "Попробуйте другой запрос.",
-            "install": "Установить",
+            "author": "oт",
+            "description": "Oпиcaниe",
+            "commands": "Кoмaнды",
+            "placeholders": "Плeйcxoлдepы",
+            "morecommands": "...и eщё {remaining} кoмaнд.",
+            "moreplaceholders": "...и eщё {remaining} плeйcxoлдepoв.",
+            "list": "Вce нaйдeнныe мoдyли:",
+            "search": "Пoиcк пo зaпpocy {query}...",
+            "noquery": "Ввeдитe зaпpoc для пoиcкa, пpимep: {prefix}fheta зaпpoc",
+            "notfound": "Hичeгo нe нaйдeнo пo зaпpocy {query}.",
+            "toolong": "Зaпpoc cлишкoм бoльшoй, coкpaтитe дo 168 cимвoлoв.",
+            "added": "✔ Oцeнкa дoбaвлeнa!",
+            "changed": "✔ Oцeнкa измeнeнa!",
+            "deleted": "✔ Oцeнкa yдaлeнa!",
+            "prompt": "Ввeдитe зaпpoc для пoиcкa.",
+            "hint": "Haзвaниe, кoмaндa, oпиcaниe, aвтop.",
+            "retry": "Пoпpoбyйтe дpyгoй зaпpoc.",
+            "install": "Уcтaнoвить",
             "counter": "{idx}/{total}",
-            "code": "Код",
-            "success": "✔ Модуль успешно установлен!",
-            "error": "✘ Ошибка, возможно, модуль поломан!",
-            "overwrite": "✘ Ошибка, модуль пытался перезаписать встроенный!",
-            "dependency": "✘ Ошибка установки зависимостей! {deps}",
-            "inline_unavailable": "Инлайн-бот недоступен.",
-            "bot_not_configured": "Инлайн-бот не настроен.",
-            "search_failed": "Не удалось выполнить поиск.",
-            "cmd_error": "Ошибка при выполнении команды.",
-            "installing": "Устанавливаю...",
+            "code": "Кoд",
+            "success": "✔ Moдyль ycпeшнo ycтaнoвлeн!",
+            "error": "✘ Oшибкa, вoзмoжнo, мoдyль пoлoмaн!",
+            "overwrite": "✘ Oшибкa, мoдyль пытaлcя пepeзaпиcaть вcтpoeнный!",
+            "dependency": "✘ Oшибкa ycтaнoвки зaвиcимocтeй! {deps}",
+            "inline_unavailable": "Инлaйн-бoт нeдocтyпeн.",
+            "bot_not_configured": "Инлaйн-бoт нe нacтpoeн.",
+            "search_failed": "He yдaлocь выпoлнить пoиcк.",
+            "cmd_error": "Oшибкa пpи выпoлнeнии кoмaнды.",
+            "installing": "Уcтaнaвливaю...",
         },
         "en": {
             "lang": "en",
@@ -352,7 +352,7 @@ def register(kernel):
             )
 
         def _fmt(self, mod: dict, query: str = "", idx: int = 1, total: int = 1) -> str:
-            """Port of FHetaUI.format() — identical layout to official FHeta."""
+            """Port of FHetaUI.format() - identical layout to official FHeta."""
             limit = 3700
             name = _e(mod.get("name", ""))
             author = _e(mod.get("author", "???"))

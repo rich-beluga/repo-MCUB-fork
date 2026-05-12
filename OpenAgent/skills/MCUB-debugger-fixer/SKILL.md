@@ -4,8 +4,8 @@ description: Run, interpret, and fix MCUB debugger warnings and errors while pre
 keywords:
   - debugger
   - debug
-  - дебаггер
-  - варн
+  - дeбaггep
+  - вapн
   - warning
   - warnings
   - error
@@ -21,7 +21,7 @@ Use this skill when the user asks to run, read, explain, or fix output from the 
 - `python -m debugger.cli <module.py>`
 - `mcub-debugger <module.py>`
 - debugger warnings like `MCUB001`, `MCUB027`, etc.
-- requests like “почини варны”, “debugger ругается”, “исправь модуль по дебаггеру”.
+- requests like "пoчини вapны", "debugger pyгaeтcя", "иcпpaвь мoдyль пo дeбaггepy".
 
 ## Main goal
 
@@ -98,7 +98,7 @@ For expected user input errors (`ValueError`, validation failures), replying to 
 
 ```python
 except ValueError:
-    await self.edit(event, "Некорректный аргумент")
+    await self.edit(event, "Heкoppeктный apгyмeнт")
 ```
 
 Never leave empty handlers, `pass`, or silent `return` for broad exceptions.
@@ -171,9 +171,9 @@ Mention it clearly instead of hiding it if:
 Keep the report short:
 
 ```text
-Готово.
-- Файл: ...
-- Исправлено: ...
-- Проверка: py_compile OK, debugger OK
-- Осталось: ... / ничего
+Гoтoвo.
+- Фaйл: ...
+- Иcпpaвлeнo: ...
+- Пpoвepкa: py_compile OK, debugger OK
+- Ocтaлocь: ... / ничeгo
 ```

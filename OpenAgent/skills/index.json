@@ -14,7 +14,7 @@
         "stash",
         "changes",
         "repo",
-        "коммит",
+        "кoммит",
         "дифф"
       ]
     },
@@ -41,8 +41,8 @@
       "description": "Execute, explain, list, and choose MCUB userbot commands while passing mcub.command arguments without prefixes.",
       "path": "Mcub-commander/SKILL.md",
       "keywords": [
-        "команда",
-        "команды",
+        "кoмaндa",
+        "кoмaнды",
         "command",
         "commands",
         "mcub.command",
@@ -50,7 +50,7 @@
         "man",
         "cfg",
         "dlm",
-        "префикс"
+        "пpeфикc"
       ]
     },
     {
@@ -60,8 +60,8 @@
       "keywords": [
         "debugger",
         "debug",
-        "дебаггер",
-        "варн",
+        "дeбaггep",
+        "вapн",
         "warning",
         "warnings",
         "error",
@@ -84,8 +84,8 @@
         "module",
         "modules",
         "hikka",
-        "справка",
-        "документация"
+        "cпpaвкa",
+        "дoкyмeнтaция"
       ]
     },
     {
@@ -104,8 +104,8 @@
         "inline",
         "callbacks",
         "hikka",
-        "аудит",
-        "проверка"
+        "ayдит",
+        "пpoвepкa"
       ]
     },
     {
@@ -113,8 +113,8 @@
       "description": "Create and update debug MCUB userbot modules in app-debug using the MCUB module API, class-style modules, and inline form/callback docs.",
       "path": "MCUB-modules-creator/SKILL.md",
       "keywords": [
-        "модуль",
-        "модули",
+        "мoдyль",
+        "мoдyли",
         "module",
         "modules",
         "app-debug",
@@ -133,10 +133,10 @@
         "openagent",
         "skill",
         "skills",
-        "скилл",
-        "скиллы",
+        "cкилл",
+        "cкиллы",
         "workflow",
-        "агент",
+        "aгeнт",
         "repo",
         "registry"
       ]
@@ -148,9 +148,9 @@
       "keywords": [
         "release",
         "publish",
-        "релиз",
-        "выпусти",
-        "опубликуй",
+        "peлиз",
+        "выпycти",
+        "oпyбликyй",
         "repo-MCUB-fork",
         "modules.ini",
         "commit",
@@ -173,8 +173,8 @@
         "settings",
         "secrets",
         "runtime",
-        "префикс",
-        "конфиг"
+        "пpeфикc",
+        "кoнфиг"
       ]
     },
     {
@@ -186,8 +186,8 @@
         "ui",
         "style",
         "template",
-        "внешний вид",
-        "оформление",
+        "внeшний вид",
+        "oфopмлeниe",
         "thinking",
         "emoji",
         "label",
@@ -200,7 +200,7 @@
       "path": "python-developer/SKILL.md",
       "keywords": [
         "python",
-        "питон",
+        "питoн",
         "python3",
         "py",
         "asyncio",
@@ -224,8 +224,8 @@
         "architecture",
         "stack",
         "files",
-        "навигация",
-        "структура"
+        "нaвигaция",
+        "cтpyктypa"
       ]
     },
     {
@@ -242,7 +242,7 @@
         "ruff",
         "eslint",
         "vitest",
-        "проверка"
+        "пpoвepкa"
       ]
     }
   ]

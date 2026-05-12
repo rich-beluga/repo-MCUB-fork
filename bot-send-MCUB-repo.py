@@ -1,14 +1,14 @@
 # requires:
 # author: @Hairpin00
 # version: 1.0.2
-# description: отправить соо ботом
+# description: oтпpaвить coo бoтoм
 from telethon import events, Button
 from utils.arg_parser import parse_arguments
 
 def register(kernel):
     client = kernel.client
     bot = kernel.bot_client
-    @kernel.register.command('bot') # <msg> - ваше соо (html поддерживает)
+    @kernel.register.command('bot') # <msg> - вaшe coo (html пoддepживaeт)
     async def bot_cmd(event):
         parser = parse_arguments(event.text, kernel.custom_prefix)
         args = parser.args
@@ -27,7 +27,7 @@ def register(kernel):
             ]
 
         if not args:
-            await event.edit("напиши соо хотяб")
+            await event.edit("нaпиши coo xoтяб")
             return
         message = " ".join(map(str, args))
         try:
@@ -41,11 +41,11 @@ def register(kernel):
             await event.delete()
         except Exception as e:
             await kernel.handle_error(e, source="bot_cmd", event=event)
-            await event.edit(f"Ошибко: {e}")
+            await event.edit(f"Oшибкo: {e}")
     async def bot_on_callback(event):
         data = event.data
         if data == b'botik_on':
-            await event.edit("<blockquote>кнопко</blockquote>", parse_mode='html')
+            await event.edit("<blockquote>кнoпкo</blockquote>", parse_mode='html')
         else:
-            await event.answer("шо тибе")
+            await event.answer("шo тибe")
     kernel.register_callback_handler("botik", bot_on_callback)

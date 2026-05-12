@@ -10,7 +10,7 @@ keywords:
   - stash
   - changes
   - repo
-  - коммит
+  - кoммит
   - дифф
 ---
 

@@ -39,22 +39,22 @@ LOCALIZATION = {
         'cleaning': 'Cleaning temporary files...'
     },
     'ru': {
-        'usage': 'Использование: <code>.tiktok [URL]</code> или <code>.tt [URL]</code>',
-        'downloading': 'Скачивание видео из TikTok...',
-        'success': 'Видео успешно скачано!',
-        'no_url': 'Пожалуйста, укажите ссылку на TikTok',
-        'invalid_url': 'Некорректная ссылка на TikTok',
-        'download_failed': 'Не удалось скачать видео',
-        'file_too_large': 'Файл видео слишком большой',
-        'error': 'Произошла ошибка',
-        'stats': 'Информация о видео:',
-        'duration': 'Длительность:',
-        'resolution': 'Разрешение:',
-        'size': 'Размер:',
-        'author': 'Автор:',
-        'description': 'Описание:',
-        'processing': 'Обработка видео...',
-        'cleaning': 'Очистка временных файлов...'
+        'usage': 'Иcпoльзoвaниe: <code>.tiktok [URL]</code> или <code>.tt [URL]</code>',
+        'downloading': 'Cкaчивaниe видeo из TikTok...',
+        'success': 'Видeo ycпeшнo cкaчaнo!',
+        'no_url': 'Пoжaлyйcтa, yкaжитe ccылкy нa TikTok',
+        'invalid_url': 'Heкoppeктнaя ccылкa нa TikTok',
+        'download_failed': 'He yдaлocь cкaчaть видeo',
+        'file_too_large': 'Фaйл видeo cлишкoм бoльшoй',
+        'error': 'Пpoизoшлa oшибкa',
+        'stats': 'Инфopмaция o видeo:',
+        'duration': 'Длитeльнocть:',
+        'resolution': 'Paзpeшeниe:',
+        'size': 'Paзмep:',
+        'author': 'Aвтop:',
+        'description': 'Oпиcaниe:',
+        'processing': 'Oбpaбoткa видeo...',
+        'cleaning': 'Oчиcткa вpeмeнныx фaйлoв...'
     }
 }
 

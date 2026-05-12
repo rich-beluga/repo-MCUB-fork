@@ -52,9 +52,9 @@ def register(kernel):
                     await results[0].click(event.chat_id, reply_to=event.reply_to_msg_id)
                     await event.delete()
                 else:
-                    await event.edit("❌ Не удалось запустить инлайн-режим")
+                    await event.edit("❌ He yдaлocь зaпycтить инлaйн-peжим")
             else:
-                await event.edit("❌ Инлайн-бот не настроен")
+                await event.edit("❌ Инлaйн-бoт нe нacтpoeн")
         except Exception as e:
             await kernel.handle_error(e, source="clicker_command", event=event)
 
@@ -71,7 +71,7 @@ def register(kernel):
         user_id = event.sender_id
         
         if str(user_id) != callback_user_id:
-            await event.answer("❌ Это не ваша игра!", alert=True)
+            await event.answer("❌ Этo нe вaшa игpa!", alert=True)
             return
             
         user_data = await get_user_data(user_id)
@@ -88,7 +88,7 @@ def register(kernel):
                 user_data['upgrade_cost'] = user_data['level'] * 10
                 await save_user_data(user_id, user_data)
             else:
-                await event.answer(f"❌ Не хватает {user_data['upgrade_cost'] - user_data['score']} очков!", alert=True)
+                await event.answer(f"❌ He xвaтaeт {user_data['upgrade_cost'] - user_data['score']} oчкoв!", alert=True)
                 return
         
         text = f"🔢 <b>Clicker Game</b>\n\n"
@@ -106,6 +106,6 @@ def register(kernel):
         try:
             await event.edit(text, buttons=buttons, parse_mode='html')
         except:
-            await event.answer("✅ Обновлено!", alert=False)
+            await event.answer("✅ Oбнoвлeнo!", alert=False)
     
     kernel.register_callback_handler('clicker_', clicker_callback_handler)

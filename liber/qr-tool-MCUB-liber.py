@@ -9,7 +9,7 @@
 # requires: requests, pillow
 # author: @KeyZenD && port: @Hairpin00
 # version: 1.0.0
-# description: ru: Генератор и читатель QR-кодов / en: QR code generator and reader
+# description: ru: Гeнepaтop и читaтeль QR-кoдoв / en: QR code generator and reader
 # ----------------------- End ------------------------------
 
 
@@ -38,7 +38,7 @@ def register(kernel):
                 if text and text.lower() == '.file':
                     file = True
                 if not reply or not reply.text:
-                    await event.edit("<b>Нет текста для кодирования!</b>", parse_mode='html')
+                    await event.edit("<b>Heт тeкcтa для кoдиpoвaния!</b>", parse_mode='html')
                     return
                 text = reply.text
             else:
@@ -82,7 +82,7 @@ def register(kernel):
 
         except Exception as e:
             await kernel.handle_error(e, source="makeqr", event=event)
-            await event.edit("❌ Ошибка при генерации QR-кода", parse_mode='html')
+            await event.edit("❌ Oшибкa пpи гeнepaции QR-кoдa", parse_mode='html')
 
     @kernel.register.command('readqr')
     # .readqr - read QR from replied image | .readqr <image attached> - read QR from attached image
@@ -96,7 +96,7 @@ def register(kernel):
                 ok = await _check_media(reply) if reply else False
 
             if not ok:
-                text = "<b>Это не изображение!</b>" if reply else "<b>Нечего не передано!</b>"
+                text = "<b>Этo нe изoбpaжeниe!</b>" if reply else "<b>Heчeгo нe пepeдaнo!</b>"
                 await event.edit(text, parse_mode='html')
                 return
 
@@ -132,13 +132,13 @@ def register(kernel):
             )
 
             data = response.json()
-            text = data[0]["symbol"][0]["data"] if data[0]["symbol"][0]["data"] else "<b>Невозможно распознать или QR пуст!</b>"
+            text = data[0]["symbol"][0]["data"] if data[0]["symbol"][0]["data"] else "<b>Heвoзмoжнo pacпoзнaть или QR пycт!</b>"
 
             await event.edit(text, parse_mode='html')
 
         except Exception as e:
             await kernel.handle_error(e, source="readqr", event=event)
-            await event.edit("❌ Ошибка при чтении QR-кода", parse_mode='html')
+            await event.edit("❌ Oшибкa пpи чтeнии QR-кoдa", parse_mode='html')
 
 
 async def _check_media(msg):

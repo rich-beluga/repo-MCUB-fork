@@ -132,21 +132,21 @@ class Board:
 
 class TicTacToe(ModuleBase):
     name = "tictactoe"
-    description = {"en": "Play Tic-Tac-Toe in chat", "ru": "Крестики-нолики в чате"}
+    description = {"en": "Play Tic-Tac-Toe in chat", "ru": "Кpecтики-нoлики в чaтe"}
     version = "1.0.0"
     author = "@Hairpin00"
 
     strings = {
         "ru": {
-            "start": "🧠 <b>Игра началась!</b>\n<i>Ждем второго игрока...</i>",
-            "start_ai": "🐻 <b>Мишка готов играть</b>",
-            "start_ai_wait": "🧠 <b>Игра с ИИ началась</b>",
-            "not_your_game": "Это не твоя игра",
-            "wait_turn": "Подожди свой ход",
-            "no_move": "Эта клетка занята",
-            "discarded": "Игра отменена",
-            "draw": "🤝 <b>Ничья!</b>",
-            "no_self": "Нельзя играть с самим собой",
+            "start": "🧠 <b>Игpa нaчaлacь!</b>\n<i>Ждeм втopoгo игpoкa...</i>",
+            "start_ai": "🐻 <b>Mишкa гoтoв игpaть</b>",
+            "start_ai_wait": "🧠 <b>Игpa c ИИ нaчaлacь</b>",
+            "not_your_game": "Этo нe твoя игpa",
+            "wait_turn": "Пoдoжди cвoй xoд",
+            "no_move": "Этa клeткa зaнятa",
+            "discarded": "Игpa oтмeнeнa",
+            "draw": "🤝 <b>Hичья!</b>",
+            "no_self": "Heльзя игpaть c caмим coбoй",
         },
         "en": {
             "start": "🧠 <b>Game started!</b>\n<i>Waiting for second player...</i>",
@@ -206,7 +206,7 @@ class TicTacToe(ModuleBase):
                 else html.escape(get_display_name(self._me))
             )
             return {
-                "text": f"🏆 <b>Winner:</b> {winner_name} ({'❌' if win_x else '⭕️'})\n<code>{self._render_text(score)}</code>",
+                "text": f"🏆 <b>Winner:</b> {winner_name} ({'❌' if win_x else '⭕'})\n<code>{self._render_text(score)}</code>",
                 "parse_mode": "html",
             }
 
@@ -225,7 +225,7 @@ class TicTacToe(ModuleBase):
             buttons.append(
                 [
                     self.Button.inline(
-                        line.replace(".", " ").replace("x", "❌").replace("o", "⭕️"),
+                        line.replace(".", " ").replace("x", "❌").replace("o", "⭕"),
                         self.cb_move,
                         data=f"{uid}:{i}:{j}",
                         allow_user=allowed_users,
@@ -254,7 +254,7 @@ class TicTacToe(ModuleBase):
             winner_name = game["name"] if human_mark == winner else "🐻 Bear"
             self._games.pop(uid, None)
             return {
-                "text": f"🏆 <b>Winner:</b> {winner_name} ({'❌' if win_x else '⭕️'})\n<code>{self._render_text(score)}</code>",
+                "text": f"🏆 <b>Winner:</b> {winner_name} ({'❌' if win_x else '⭕'})\n<code>{self._render_text(score)}</code>",
                 "parse_mode": "html",
             }
 
@@ -266,14 +266,14 @@ class TicTacToe(ModuleBase):
         text = (
             f"🧠 <b>{choice(PHRASES)}</b>\n"
             f"<i>{game['name']} vs <b>🐻 Bear</b></i>\n\n"
-            f"<i>You are <b>{'❌' if human_mark == 'x' else '⭕️'}</b></i>"
+            f"<i>You are <b>{'❌' if human_mark == 'x' else '⭕'}</b></i>"
         )
         buttons = []
         for i, row in enumerate(score):
             buttons.append(
                 [
                     self.Button.inline(
-                        line.replace(".", " ").replace("x", "❌").replace("o", "⭕️"),
+                        line.replace(".", " ").replace("x", "❌").replace("o", "⭕"),
                         self.cb_move_ai,
                         data=f"{uid}:{i}:{j}",
                         allow_user=game["user_id"],
@@ -416,7 +416,7 @@ class TicTacToe(ModuleBase):
         if payload:
             await call.edit(**payload)
 
-    @command("tictactoe", doc_en="start tic tac toe", doc_ru="начать игру")
+    @command("tictactoe", doc_en="start tic tac toe", doc_ru="нaчaть игpy")
     async def cmd_tictactoe(self, event: Any) -> None:
         uid = uuid.uuid4().hex
         await self.inline(
@@ -437,7 +437,7 @@ class TicTacToe(ModuleBase):
             parse_mode="html",
         )
 
-    @command("tictacai", doc_en="play with AI", doc_ru="игра с ИИ")
+    @command("tictacai", doc_en="play with AI", doc_ru="игpa c ИИ")
     async def cmd_tictacai(self, event: Any) -> None:
         uid = uuid.uuid4().hex
         await self.inline(

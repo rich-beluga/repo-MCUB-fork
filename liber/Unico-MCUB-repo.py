@@ -21,7 +21,7 @@ class Unico(ModuleBase):
     version = "1.0.2"
     author = "@Hairpin00"
     description: dict[str, str] = {
-        "ru": "BOT команда /unico показывает кнопку, после нажатия на которую бот отправляет Unico медиа",
+        "ru": "BOT кoмaндa /unico пoкaзывaeт кнoпкy, пocлe нaжaтия нa кoтopyю бoт oтпpaвляeт Unico мeдиa",
         "en": "BOT command /unico shows a button that makes the bot send Unico media after click",
     }
 
@@ -41,10 +41,10 @@ class Unico(ModuleBase):
             "prompt": "Do you want Unico?",
             "btn_search": "Search Unico",
             "btn_cancel": "Cancel",
-            "searching": "🔍 Ищу Unico...",
+            "searching": "🔍 Ищy Unico...",
             "no_bot": "Bot client is not available.",
-            "no_media": "Unico медиа не найдено. Попробуйте позже.",
-            "send_error": "Не удалось отправить Unico медиа.",
+            "no_media": "Unico мeдиa нe нaйдeнo. Пoпpoбyйтe пoзжe.",
+            "send_error": "He yдaлocь oтпpaвить Unico мeдиa.",
             "cancelled": "Cancelled",
         },
     }
@@ -89,7 +89,7 @@ class Unico(ModuleBase):
 
     @bot_command(
         "unico",
-        doc_ru="показать кнопку, которая отправит Unico медиа от бота",
+        doc_ru="пoкaзaть кнoпкy, кoтopaя oтпpaвит Unico мeдиa oт бoтa",
         doc_en="show a button that sends Unico media from the bot",
     )
     async def cmd_unico(self, event: events.NewMessage.Event) -> None:

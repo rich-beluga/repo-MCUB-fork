@@ -5,10 +5,10 @@ keywords:
   - openagent
   - skill
   - skills
-  - скилл
-  - скиллы
+  - cкилл
+  - cкиллы
   - workflow
-  - агент
+  - aгeнт
   - repo
   - registry
 ---

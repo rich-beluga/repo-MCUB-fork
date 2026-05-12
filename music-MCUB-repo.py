@@ -57,9 +57,9 @@ def register(kernel):
                             if section['type'] == 'SONG':
                                 metadata = section.get('metadata', [])
                                 for item in metadata:
-                                    if item['title'] == 'Альбом':
+                                    if item['title'] == 'Aльбoм':
                                         album = item['text']
-                                    elif item['title'] == 'Выпущено':
+                                    elif item['title'] == 'Выпyщeнo':
                                         year = item['text']
 
 

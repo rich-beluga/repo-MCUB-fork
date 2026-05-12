@@ -11,7 +11,7 @@ keywords:
   - ruff
   - eslint
   - vitest
-  - проверка
+  - пpoвepкa
 ---
 
 # Test and Lint Runner

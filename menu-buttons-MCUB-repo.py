@@ -73,7 +73,7 @@ def register(kernel):
                 ]
             ]
             await event.edit(
-                "Привет мир <tg-emoji emoji-id=\"5404728536810398694\">🧊</tg-emoji>",
+                "Пpивeт миp <tg-emoji emoji-id=\"5404728536810398694\">🧊</tg-emoji>",
                 buttons=buttons,
                 parse_mode='html'
                 )

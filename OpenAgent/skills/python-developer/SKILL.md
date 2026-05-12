@@ -3,7 +3,7 @@ name: python-developer
 description: Write, review, debug, and refactor Python code with project-aware style, tests, async safety, and clean error handling.
 keywords:
   - python
-  - питон
+  - питoн
   - python3
   - py
   - asyncio

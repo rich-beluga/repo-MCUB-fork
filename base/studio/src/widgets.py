@@ -102,7 +102,7 @@ def draw_box(win, y: int, x: int, h: int, w: int,
         win.addch(y,         x,         curses.ACS_ULCORNER, ba)
         win.addch(y,         x + w - 1, curses.ACS_URCORNER, ba)
         win.addch(y + h - 1, x,         curses.ACS_LLCORNER, ba)
-        # Bottom-right corner may raise at screen edge — ignore
+        # Bottom-right corner may raise at screen edge - ignore
         try:
             win.addch(y + h - 1, x + w - 1, curses.ACS_LRCORNER, ba)
         except curses.error:
@@ -138,7 +138,7 @@ def draw_progress_bar(win, y: int, x: int, w: int,
                       empty_cp: int = CP_DIM) -> None:
     """
     Render a Unicode block progress bar.
-    percent: 0.0 – 1.0
+    percent: 0.0 - 1.0
     Layout: [████████░░░░░░  68%]
     """
     percent = clamp(float(percent), 0.0, 1.0)

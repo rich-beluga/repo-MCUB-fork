@@ -4,9 +4,9 @@ description: Validate, publish, index, commit, and push MCUB modules from debug 
 keywords:
   - release
   - publish
-  - релиз
-  - выпусти
-  - опубликуй
+  - peлиз
+  - выпycти
+  - oпyбликyй
   - repo-MCUB-fork
   - modules.ini
   - commit

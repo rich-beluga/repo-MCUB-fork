@@ -5,7 +5,7 @@
 # requires:
 # author: @Hairpin00
 # version: 1.4.0
-# description: Отправляет unico с канала unico_1213213213 / sending unico with channel unico_1213213213
+# description: Oтпpaвляeт unico c кaнaлa unico_1213213213 / sending unico with channel unico_1213213213
 # ----------------------- End ------------------------------
 
 import random
@@ -23,18 +23,18 @@ def register(kernel):
 
     strings = {
         'ru': {
-            'searching': "🔍 Ищу Unico...",
-            'no_media': "❌ Не найдено медиа в канале. Попробуйте позже.",
-            'send_error': "❌ Не удалось отправить медиа. Попробуйте снова.",
-            'module_error': "❌ Ошибка в модуле unico-cat: {}",
-            'media_error': "Ошибка отправки медиа: {}",
-            'fetch_error': "Ошибка получения медиа: {}",
-            'cache_updated': "Кэш Unico обновлен. Последние {} медиа получены",
-            'cache_error': "Ошибка обновления кэша Unico: {}",
-            'video': "видео",
-            'photo': "фото",
-            'document': "документ",
-            'media': "медиа"
+            'searching': "🔍 Ищy Unico...",
+            'no_media': "❌ He нaйдeнo мeдиa в кaнaлe. Пoпpoбyйтe пoзжe.",
+            'send_error': "❌ He yдaлocь oтпpaвить мeдиa. Пoпpoбyйтe cнoвa.",
+            'module_error': "❌ Oшибкa в мoдyлe unico-cat: {}",
+            'media_error': "Oшибкa oтпpaвки мeдиa: {}",
+            'fetch_error': "Oшибкa пoлyчeния мeдиa: {}",
+            'cache_updated': "Кэш Unico oбнoвлeн. Пocлeдниe {} мeдиa пoлyчeны",
+            'cache_error': "Oшибкa oбнoвлeния кэшa Unico: {}",
+            'video': "видeo",
+            'photo': "фoтo",
+            'document': "дoкyмeнт",
+            'media': "мeдиa"
         },
         'en': {
             'searching': "🔍 Searching for Unico...",
@@ -113,7 +113,7 @@ def register(kernel):
             return []
 
     @kernel.register.command('unico')
-    # отправить юне / send unico
+    # oтпpaвить юнe / send unico
     async def unico_handler(event):
         try:
             msg = await event.edit(lang_strings['searching'])
