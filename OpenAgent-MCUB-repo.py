@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import difflib
 import html
 import io
 import mimetypes
@@ -207,6 +208,7 @@ class OpenAgent(ModuleBase):
         "code.generate_file", "code.generate_mcub_module", "code.choose_filename", "code.attach_result", "code.read_docs",
         "context.remember", "context.clear", "context.regenerate", "context.reply_context", "context.media_context",
         "thinking.note",
+        "todo.add", "todo.delete", "todo.edit", "todo.current", "todo.close", "todo.closeall", "todo.clear",
         "account.blacklist", "account.saved_messages", "account.effects", "account.reactions", "account.available_reactions",
         "utility.token_usage", "utility.placeholders", "utility.random_template", "utility.agent_log", "utility.error_file",
     )
@@ -433,34 +435,34 @@ class OpenAgent(ModuleBase):
         ),
         ConfigValue(
             "response_header",
-            "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            "<blockquote><a href=\"tg://emoji?id=6010179991944305029\">☺️</a> <strong>OpenAgent</strong>: <a href=\"tg://emoji?id=5325872701032635449\">⏳</a>  <em>{elapsed}</em>s\n• <u>{provider}/{model}</u>  •  <code>{reasoning_effort}</code>\n| | | | | | | | | | | | | | | | | | | | | | | | | | |\n<a href=\"tg://emoji?id=5408994848084624514\">💸</a> <strong>in</strong> <em>{input_tokens}</em>, <strong>out</strong> <em>{output_tokens}</em> | <b>total</b>\n<i>{total_tokens}</i> | <strong>tool use:</strong> <em>{tool_count}</em></blockquote>\n<blockquote expandable><i>{thinking}</i></blockquote>",
             description="Final response header template. Placeholders: {provider}, {provider_key}, {model}, {reasoning_effort}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
-            validator=String(default="🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}"),
+            validator=String(default="<blockquote><a href=\"tg://emoji?id=6010179991944305029\">☺️</a> <strong>OpenAgent</strong>: <a href=\"tg://emoji?id=5325872701032635449\">⏳</a>  <em>{elapsed}</em>s\n• <u>{provider}/{model}</u>  •  <code>{reasoning_effort}</code>\n| | | | | | | | | | | | | | | | | | | | | | | | | | |\n<a href=\"tg://emoji?id=5408994848084624514\">💸</a> <strong>in</strong> <em>{input_tokens}</em>, <strong>out</strong> <em>{output_tokens}</em> | <b>total</b>\n<i>{total_tokens}</i> | <strong>tool use:</strong> <em>{tool_count}</em></blockquote>\n<blockquote expandable><i>{thinking}</i></blockquote>"),
         ),
         ConfigValue(
             "request_label",
-            "<b>📝 Запрос:</b>",
+            "<a href=\"tg://emoji?id=6010352868672936598\"><strong>🐈‍⬛</strong></a><strong></strong><strong> Prompt:</strong>",
             description="Request block label template. Placeholders: {provider}, {provider_key}, {model}, {reasoning_effort}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
-            validator=String(default="<b>📝 Запрос:</b>"),
+            validator=String(default="<a href=\"tg://emoji?id=6010352868672936598\"><strong>🐈‍⬛</strong></a><strong></strong><strong> Prompt:</strong>"),
         ),
         ConfigValue(
             "response_label",
-            "<b>💬 Ответ:</b>",
+            "<a href=\"tg://emoji?id=6010286885090368072\"><strong>❌</strong></a><strong></strong><strong> Answer:</strong>",
             description="Response block label template. Placeholders: {provider}, {provider_key}, {model}, {reasoning_effort}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
-            validator=String(default="<b>💬 Ответ:</b>"),
+            validator=String(default="<a href=\"tg://emoji?id=6010286885090368072\"><strong>❌</strong></a><strong></strong><strong> Answer:</strong>"),
         ),
         ConfigValue(
             "thinking_template",
-            "{random}",
+            "<blockquote><a href=\"tg://emoji?id=6010292571627069263\">😎</a> <u>{provider}/{model}</u> • <em>prepares the response...</em></blockquote >\n<blockquote><a href=\"tg://emoji?id=5404857686477015710\">🔄</a><strong><em> {random}</em></strong><em></em></blockquote>",
             description="Initial loading/thinking message template. Placeholders: {provider}, {provider_key}, {model}, {reasoning_effort}, {elapsed}, {tool_count}, {input_tokens}, {output_tokens}, {total_tokens}, {thinking}, {random}, {prefix}, {time}, {date}",
-            validator=String(default="{random}"),
+            validator=String(default="<blockquote><a href=\"tg://emoji?id=6010292571627069263\">😎</a> <u>{provider}/{model}</u> • <em>prepares the response...</em></blockquote >\n<blockquote><a href=\"tg://emoji?id=5404857686477015710\">🔄</a><strong><em> {random}</em></strong><em></em></blockquote>"),
         ),
         ConfigValue(
             "tool_display_template",
-            "<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>",
+            "<blockquote expandable><i>{thinking_line}</i></blockquote>\n<blockquote expandable><strong>┌|</strong> {status_emoji_html} <em>{status_text}</em> <code>{tool}</code>\n<strong>└|</strong> <a href=\"tg://emoji?id=6010570945637392851\">🥳</a>  <b>Round:</b> <code>{round}/{round_total}</code> • <b>Reasoning:</b>\n<code>{reasoning_effort}</code>\n</blockquote><blockquote><a href=\"tg://emoji?id=5310041868191407556\">🩸</a> <strong>{activity_line}</strong></blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6012361831035705571\">😪</a> <strong>Log tools</strong>\n<code>{log_lines}</code></blockquote>",
             description="Tool execution status template. Raw: {tool}, {title}, {value}, {log}, {step}. Semantic: {round}, {round_total}, {progress_bar}, {progress_percent}, {status_emoji}, {status_icon}, {status_emoji_html}, {status_icon_html}, {status_text}, {tool_group}, {tool_short}, {tool_input}, {tool_input_block}, {thinking_line}, {thinking_block}, {log_lines}, {log_block}, {log_count}, {elapsed_line}, {token_line}, {model_line}, {activity_line}. General: {provider}, {model}, {reasoning_effort}, {elapsed}, {thinking}, {random}, {prefix}, {time}, {date}",
             validator=String(
-                default="<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>"
+                default="<blockquote expandable><i>{thinking_line}</i></blockquote>\n<blockquote expandable><strong>┌|</strong> {status_emoji_html} <em>{status_text}</em> <code>{tool}</code>\n<strong>└|</strong> <a href=\"tg://emoji?id=6010570945637392851\">🥳</a>  <b>Round:</b> <code>{round}/{round_total}</code> • <b>Reasoning:</b>\n<code>{reasoning_effort}</code>\n</blockquote><blockquote><a href=\"tg://emoji?id=5310041868191407556\">🩸</a> <strong>{activity_line}</strong></blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6012361831035705571\">😪</a> <strong>Log tools</strong>\n<code>{log_lines}</code></blockquote>"
             ),
         ),
         ConfigValue(
@@ -504,6 +506,12 @@ class OpenAgent(ModuleBase):
             ["Thinking...", "Думаю...", "Генерирую..."],
             description="Random lines for {random}",
             validator=List(default=["Thinking...", "Думаю...", "Генерирую..."], item_type=str),
+        ),
+        ConfigValue(
+            "todo_status_emojis",
+            "pending=...\nopen=>>>\nclosed=---",
+            description="State markers for {todo}. Format: pending=..., open=>>>, closed=---",
+            validator=String(default="pending=...\nopen=>>>\nclosed=---"),
         ),
         ConfigValue(
             "placeholders",
@@ -555,9 +563,9 @@ class OpenAgent(ModuleBase):
         ),
         ConfigValue(
             "tool_confirmation_template",
-            "<b>Подтвердить действие?</b>\n<b>Tool:</b> <code>{tool}</code>{elapsed_line}\n\n<blockquote expandable><b>Что будет выполнено</b>\n<code>{value}</code></blockquote>",
+            "<blockquote><a href=\"tg://emoji?id=6010201728773790293\">😈</a> Continue?\n<a href=\"tg://emoji?id=6012317326584583729\">😐</a> Tool: {tool} • {elapsed}s</blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6010394680179562842\">😶</a> <b>What will be completed</b>\n<a href=\"tg://emoji?id=6010292550152230657\">☀️</a> <code>{value}</code></blockquote>",
             description="Confirmation form template. Placeholders: {tool}, {value}, {elapsed}, {elapsed_line}",
-            validator=String(default="<b>Подтвердить действие?</b>\n<b>Tool:</b> <code>{tool}</code>{elapsed_line}\n\n<blockquote expandable><b>Что будет выполнено</b>\n<code>{value}</code></blockquote>"),
+            validator=String(default="<blockquote><a href=\"tg://emoji?id=6010201728773790293\">😈</a> Continue?\n<a href=\"tg://emoji?id=6012317326584583729\">😐</a> Tool: {tool} • {elapsed}s</blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6010394680179562842\">😶</a> <b>What will be completed</b>\n<a href=\"tg://emoji?id=6010292550152230657\">☀️</a> <code>{value}</code></blockquote>"),
         ),
         ConfigValue(
             "tool_confirmation_yes_text",
@@ -621,11 +629,11 @@ class OpenAgent(ModuleBase):
             "tool_memory_enabled": False,
             "tool_memory_items": 20,
             "tool_memory_max_chars": 500,
-            "response_header": "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
-            "request_label": "<b>📝 Запрос:</b>",
-            "response_label": "<b>💬 Ответ:</b>",
-            "thinking_template": "{random}",
-            "tool_display_template": "<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>",
+            "response_header": "<blockquote><a href=\"tg://emoji?id=6010179991944305029\">☺️</a> <strong>OpenAgent</strong>: <a href=\"tg://emoji?id=5325872701032635449\">⏳</a>  <em>{elapsed}</em>s\n• <u>{provider}/{model}</u>  •  <code>{reasoning_effort}</code>\n| | | | | | | | | | | | | | | | | | | | | | | | | | |\n<a href=\"tg://emoji?id=5408994848084624514\">💸</a> <strong>in</strong> <em>{input_tokens}</em>, <strong>out</strong> <em>{output_tokens}</em> | <b>total</b>\n<i>{total_tokens}</i> | <strong>tool use:</strong> <em>{tool_count}</em></blockquote>\n<blockquote expandable><i>{thinking}</i></blockquote>",
+            "request_label": "<a href=\"tg://emoji?id=6010352868672936598\"><strong>🐈‍⬛</strong></a><strong></strong><strong> Prompt:</strong>",
+            "response_label": "<a href=\"tg://emoji?id=6010286885090368072\"><strong>❌</strong></a><strong></strong><strong> Answer:</strong>",
+            "thinking_template": "<blockquote><a href=\"tg://emoji?id=6010292571627069263\">😎</a> <u>{provider}/{model}</u> • <em>prepares the response...</em></blockquote >\n<blockquote><a href=\"tg://emoji?id=5404857686477015710\">🔄</a><strong><em> {random}</em></strong><em></em></blockquote>",
+            "tool_display_template": "<blockquote expandable><i>{thinking_line}</i></blockquote>\n<blockquote expandable><strong>┌|</strong> {status_emoji_html} <em>{status_text}</em> <code>{tool}</code>\n<strong>└|</strong> <a href=\"tg://emoji?id=6010570945637392851\">🥳</a>  <b>Round:</b> <code>{round}/{round_total}</code> • <b>Reasoning:</b>\n<code>{reasoning_effort}</code>\n</blockquote><blockquote><a href=\"tg://emoji?id=5310041868191407556\">🩸</a> <strong>{activity_line}</strong></blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6012361831035705571\">😪</a> <strong>Log tools</strong>\n<code>{log_lines}</code></blockquote>",
             "tool_status_emojis": "thinking=❔\nterminal=🖥\nweb=🌐\nfile=📦\nmcub=🧲\nmessage=💬\ndialog=🗂\nchat=🐈‍⬛\nmoderation=🛡\nprofile=👤\ncontacts=👥\ncreation=✨\nskills=🧠\ncode=🧬\ncontext=🧾\nutility=🛠\ndefault=🛠",
             "tool_display_max_chars": 1200,
             "tool_display_log_lines": 8,
@@ -633,6 +641,7 @@ class OpenAgent(ModuleBase):
             "thinking_empty_text": "Модель ещё не думала.",
             "thinking_bullet": "•",
             "random_strings": ["Thinking...", "Думаю...", "Генерирую..."],
+            "todo_status_emojis": "pending=...\nopen=>>>\nclosed=---",
             "placeholders": "",
             "repo_context_enabled": True,
             "repo_context_max_chars": 7000,
@@ -641,7 +650,7 @@ class OpenAgent(ModuleBase):
             "skill_repo_url": "https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/main/OpenAgent/skills",
             "tool_confirmation_enabled": True,
             "tool_confirmation_mode": "medium",
-            "tool_confirmation_template": "<b>Подтвердить действие?</b>\n<b>Tool:</b> <code>{tool}</code>{elapsed_line}\n\n<blockquote expandable><b>Что будет выполнено</b>\n<code>{value}</code></blockquote>",
+            "tool_confirmation_template": "<blockquote><a href=\"tg://emoji?id=6010201728773790293\">😈</a> Continue?\n<a href=\"tg://emoji?id=6012317326584583729\">😐</a> Tool: {tool} • {elapsed}s</blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6010394680179562842\">😶</a> <b>What will be completed</b>\n<a href=\"tg://emoji?id=6010292550152230657\">☀️</a> <code>{value}</code></blockquote>",
             "tool_confirmation_yes_text": "Выполнить",
             "tool_confirmation_no_text": "Не сейчас",
             "tool_confirmation_timeout": 900,
@@ -674,6 +683,8 @@ class OpenAgent(ModuleBase):
             "output_tokens": 0,
             "total_tokens": 0,
         }
+        self._todo_items_cache: list[dict[str, str]] = []
+        await self._load_todo_items_storage()
         self.log.info("OpenAgent loaded")
 
     def _provider(self) -> str:
@@ -710,7 +721,7 @@ class OpenAgent(ModuleBase):
     ) -> str:
         return self._render_template(
             str(self.config.get("response_header", ""))
-            or "🍇 <i>OpenAgent</i> | <b>🕐 {elapsed}s</b> | 🧧 {provider}",
+            or "<blockquote><a href=\"tg://emoji?id=6010179991944305029\">☺️</a> <strong>OpenAgent</strong>: <a href=\"tg://emoji?id=5325872701032635449\">⏳</a>  <em>{elapsed}</em>s\n• <u>{provider}/{model}</u>  •  <code>{reasoning_effort}</code>\n| | | | | | | | | | | | | | | | | | | | | | | | | | |\n<a href=\"tg://emoji?id=5408994848084624514\">💸</a> <strong>in</strong> <em>{input_tokens}</em>, <strong>out</strong> <em>{output_tokens}</em> | <b>total</b>\n<i>{total_tokens}</i> | <strong>tool use:</strong> <em>{tool_count}</em></blockquote>\n<blockquote expandable><i>{thinking}</i></blockquote>",
             elapsed=elapsed,
             tool_count=tool_count,
             thinking_notes=thinking_notes,
@@ -753,6 +764,7 @@ class OpenAgent(ModuleBase):
             "output_tokens": str(self._last_token_usage.get("output_tokens", 0)),
             "total_tokens": str(self._last_token_usage.get("total_tokens", 0)),
             "thinking": self._format_thinking_notes(thinking_notes),
+            "todo": self._format_todo_placeholder(),
             "random": random_value,
             "prefix": getattr(self.kernel, "custom_prefix", ".") or ".",
             "time": time.strftime("%H:%M:%S"),
@@ -779,7 +791,7 @@ class OpenAgent(ModuleBase):
 
     def _thinking_text(self) -> str:
         return self._render_template(
-            str(self.config.get("thinking_template", "") or "{random}")
+            str(self.config.get("thinking_template", "") or "<blockquote><a href=\"tg://emoji?id=6010292571627069263\">😎</a> <u>{provider}/{model}</u> • <em>prepares the response...</em></blockquote >\n<blockquote><a href=\"tg://emoji?id=5404857686477015710\">🔄</a><strong><em> {random}</em></strong><em></em></blockquote>")
         )
 
     def _format_placeholders(self) -> str:
@@ -799,6 +811,8 @@ class OpenAgent(ModuleBase):
                 "{output_tokens} - Output/completion tokens returned by provider",
                 "{total_tokens} - Total tokens for last provider response",
                 "{thinking} - Recent thinking.note entries or thinking_empty_text",
+                "{todo} - Persistent TODO list rendered with state markers",
+                "{todo_html} - Same as {todo}, but intended for raw HTML insertion in tool_display_template",
                 "{random} - Random line from random_strings",
                 "{prefix} - Current command prefix",
                 "{time} - Current local time",
@@ -838,8 +852,142 @@ class OpenAgent(ModuleBase):
                 "Config tips",
                 "tool_status_emojis format: one mapping per line, e.g. terminal=🖥 or thinking.note=<a href=\"tg://emoji?id=...\">❔</a>",
                 "tool-specific emoji keys override group keys; default=... is used as fallback.",
+                "todo_status_emojis format: pending=..., open=>>>, closed=--- (aliases: active/todo and done/completed).",
             ]
         )
+
+    def _parse_todo_items_raw(self, raw: str | None) -> list[dict[str, str]]:
+        raw_text = str(raw or "").strip()
+        if not raw_text:
+            return []
+        try:
+            parsed = json.loads(raw_text)
+        except Exception:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        cleaned: list[dict[str, str]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            text = self._todo_parse_html_text(str(item.get("text", "") or ""))
+            status = self._todo_normalize_status(str(item.get("status", "pending") or "pending"))
+            if text:
+                cleaned.append({"text": text[:500], "status": status})
+        return cleaned
+
+    def _todo_parse_html_text(self, text: str) -> str:
+        value = html.unescape(str(text or "")).strip()
+        value = re.sub(r"\s+", " ", value).strip()
+        return value[:500]
+
+    def _todo_items(self) -> list[dict[str, str]]:
+        cached = getattr(self, "_todo_items_cache", None)
+        if isinstance(cached, list):
+            return [dict(item) for item in cached if isinstance(item, dict)]
+        return []
+
+    async def _load_todo_items_storage(self) -> None:
+        self._todo_items_cache = []
+
+    def _todo_normalize_status(self, status: str) -> str:
+        status = (status or "").strip().lower()
+        mapping = {
+            "open": "open",
+            "active": "open",
+            "todo": "open",
+            "new": "open",
+            "pending": "pending",
+            "later": "pending",
+            "wait": "pending",
+            "backlog": "pending",
+            "closed": "closed",
+            "close": "closed",
+            "done": "closed",
+            "completed": "closed",
+            "complete": "closed",
+            "finished": "closed",
+        }
+        return mapping.get(status, "pending")
+
+    def _todo_status_map(self) -> dict[str, str]:
+        mapping = {
+            "pending": "...",
+            "open": ">>>",
+            "closed": "---",
+        }
+        raw = str(self.config.get("todo_status_emojis", "") or "")
+        for line in raw.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = self._todo_normalize_status(key.strip().lower())
+            value = value.strip()
+            if key and value:
+                mapping[key] = value
+        return mapping
+
+    def _format_todo_placeholder(self) -> str:
+        items = self._todo_items()
+        if not items:
+            return "TODO empty"
+        status_map = self._todo_status_map()
+        return "\n".join(
+            f"{status_map.get(item['status'], '...')} {item['text']}"
+            for item in items
+        )
+
+    async def _save_todo_items(self, items: list[dict[str, str]]) -> list[dict[str, str]]:
+        cleaned: list[dict[str, str]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = self._todo_parse_html_text(str(item.get("text", "") or ""))
+            if not text:
+                continue
+            cleaned.append(
+                {
+                    "text": text[:500],
+                    "status": self._todo_normalize_status(str(item.get("status", "pending") or "pending")),
+                }
+            )
+        self._todo_items_cache = cleaned
+        await asyncio.sleep(0)
+        return cleaned
+
+    def _todo_target_index(
+        self,
+        items: list[dict[str, str]],
+        attrs: dict[str, str],
+        body: str,
+        *,
+        allow_body_text: bool = True,
+    ) -> tuple[int | None, str]:
+        target_raw = (
+            attrs.get("index")
+            or attrs.get("idx")
+            or attrs.get("id")
+            or attrs.get("number")
+            or attrs.get("target")
+            or attrs.get("item")
+            or ""
+        ).strip()
+        body_raw = (body or "").strip()
+        if not target_raw and body_raw and "\n" not in body_raw and "|" not in body_raw:
+            target_raw = body_raw
+        if not target_raw:
+            return None, "todo index/text is required"
+        if target_raw.isdigit():
+            idx = int(target_raw) - 1
+            if 0 <= idx < len(items):
+                return idx, ""
+            return None, f"todo index out of range: {target_raw}"
+        if allow_body_text:
+            needle = target_raw.lower()
+            for idx, item in enumerate(items):
+                if needle in item["text"].lower():
+                    return idx, ""
+        return None, "todo item not found"
 
     def _tool_group(self, tool_name: str) -> str:
         tool_name = (tool_name or "").lower().strip()
@@ -890,6 +1038,7 @@ class OpenAgent(ModuleBase):
             "skills": "🧠",
             "code": "🧬",
             "context": "🧾",
+            "todo": "📝",
             "utility": "🛠",
         }.get(group, "🛠")
 
@@ -914,6 +1063,8 @@ class OpenAgent(ModuleBase):
             return "Проверяю диалоги"
         if group == "code":
             return "Готовлю код"
+        if group == "todo":
+            return "Обновляю TODO"
         return title or f"Выполняю {tool_name or 'tool'}"
 
     def _progress_bar(self, step: int, total: int, width: int = 10) -> str:
@@ -1001,14 +1152,18 @@ class OpenAgent(ModuleBase):
         log_text = "\n".join(log[-log_lines:]) if log_lines > 0 else ""
         if len(log_text) > 1800:
             log_text = log_text[-1800:]
+        placeholder_values = self._placeholder_values(
+            elapsed=elapsed,
+            tool_count=len(log),
+            thinking_notes=thinking_notes,
+        )
         values = {
             key: html.escape(value)
-            for key, value in self._placeholder_values(
-                elapsed=elapsed,
-                tool_count=len(log),
-                thinking_notes=thinking_notes,
-            ).items()
+            for key, value in placeholder_values.items()
         }
+        todo_raw = placeholder_values.get("todo", "")
+        values["todo"] = todo_raw
+        values["todo_html"] = todo_raw
         values.update({
             "title": html.escape(title),
             "tool": html.escape(tool_name or title),
@@ -1030,7 +1185,7 @@ class OpenAgent(ModuleBase):
         )
         template = str(self.config.get("tool_display_template", "") or "")
         if not template:
-            template = "<b>🛠 {tool}</b>\n<code>{value}</code>\n\n<blockquote expandable><b>Agent Log</b>\n{log}</blockquote>"
+            template = "<blockquote expandable><i>{thinking_line}</i></blockquote>\n<blockquote expandable><strong>┌|</strong> {status_emoji_html} <em>{status_text}</em> <code>{tool}</code>\n<strong>└|</strong> <a href=\"tg://emoji?id=6010570945637392851\">🥳</a>  <b>Round:</b> <code>{round}/{round_total}</code> • <b>Reasoning:</b>\n<code>{reasoning_effort}</code>\n</blockquote><blockquote><a href=\"tg://emoji?id=5310041868191407556\">🩸</a> <strong>{activity_line}</strong></blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6012361831035705571\">😪</a> <strong>Log tools</strong>\n<code>{log_lines}</code></blockquote>"
         for key, item in values.items():
             template = template.replace("{" + key + "}", item)
         return template
@@ -1048,7 +1203,7 @@ class OpenAgent(ModuleBase):
         thinking_notes: list[str] | None = None,
     ) -> str:
         return self._render_template(
-            str(self.config.get("request_label", "") or "<b>📝 Запрос:</b>"),
+            str(self.config.get("request_label", "") or "<a href=\"tg://emoji?id=6010352868672936598\"><strong>🐈‍⬛</strong></a><strong></strong><strong> Prompt:</strong>"),
             elapsed=elapsed,
             thinking_notes=thinking_notes,
         )
@@ -1060,7 +1215,7 @@ class OpenAgent(ModuleBase):
         thinking_notes: list[str] | None = None,
     ) -> str:
         return self._render_template(
-            str(self.config.get("response_label", "") or "<b>💬 Ответ:</b>"),
+            str(self.config.get("response_label", "") or "<a href=\"tg://emoji?id=6010286885090368072\"><strong>❌</strong></a><strong></strong><strong> Answer:</strong>"),
             elapsed=elapsed,
             thinking_notes=thinking_notes,
         )
@@ -1628,6 +1783,7 @@ class OpenAgent(ModuleBase):
     def _system_prompt(self, user_prompt: str = "") -> str:
         prompt = str(self.config["system_prompt"]).strip()
         tlist = ", ".join(sorted(self._get_tool_map().keys()))
+        todo_snapshot = self._format_todo_placeholder()
         prompt += (
             f"\n\nOpenAgent 0.5.0 refreshed architecture is active. You have access to {len(self.TOOL_REGISTRY)} tool operations.\n"
             "To use tools, output one or more fenced JSON blocks in the same turn and nothing else. Batch independent tools to reduce latency:\n"
@@ -1648,8 +1804,12 @@ class OpenAgent(ModuleBase):
             "7. A separate startup thinking.note turn has already been completed before this main tool loop; do not repeat a startup/prologue note before the first real tool.\n"
             "8. Do NOT use tools unless the user request actually requires tools or explicitly asks for an action/tool. Simple greetings or chat like 'ку' must be answered directly in plain text, e.g. 'Привет!', with no tool calls.\n"
             "9. Use thinking.note only for meaningful later progress updates: after important findings, before risky/long actions, before sending/saving final artifacts, or when switching approach. Avoid hidden chain-of-thought; notes must be concise user-facing status updates.\n"
+            "10. TODO discipline: if the task has multiple steps or the user mentions todo/plan/checklist, keep todo.* synchronized with real progress.\n"
+            "11. TODO discipline: add planned steps with todo.add, update wording with todo.edit, mark current executing task with todo.current, mark finished work with todo.close, and use todo.closeall only when every item is truly done.\n"
+            "12. Before final answer for multi-step work, ensure TODO state is up to date and reflects what is completed vs pending. If all items are done and no further steps remain, call todo.clear unless the user asked to keep history.\n"
             "Never explain tool calls. Just output the tool_call block(s) and wait for results."
         )
+        prompt += "\n\nCurrent TODO state:\n" + todo_snapshot
         prompt += self._load_skills_prompt(user_prompt)
         prompt += self._repo_context_prompt()
         return prompt
@@ -3023,6 +3183,7 @@ class OpenAgent(ModuleBase):
             "profile.get", "profile.get_full", "profile.get_me", "profile.get_photos", "profile.common_chats",
             "context.reply_context", "context.media_context", "skills.list", "skills.read", "skills.activate",
             "skills.repo_list", "utility.token_usage", "utility.placeholders", "utility.random_template",
+            "todo.add", "todo.delete", "todo.edit", "todo.current", "todo.close", "todo.closeall", "todo.clear",
             "thinking.note",
         }
         if name in safe_read_tools:
@@ -3096,7 +3257,7 @@ class OpenAgent(ModuleBase):
         elapsed_line = f"\n⏳ {elapsed_value}s" if elapsed is not None else ""
         template = str(self.config.get("tool_confirmation_template", "") or "").strip()
         if not template:
-            template = "<b>Подтвердить действие?</b>\n<b>Tool:</b> <code>{tool}</code>{elapsed_line}"
+            template = "<blockquote><a href=\"tg://emoji?id=6010201728773790293\">😈</a> Continue?\n<a href=\"tg://emoji?id=6012317326584583729\">😐</a> Tool: {tool} • {elapsed}s</blockquote>\n<blockquote expandable><a href=\"tg://emoji?id=6010394680179562842\">😶</a> <b>What will be completed</b>\n<a href=\"tg://emoji?id=6010292550152230657\">☀️</a> <code>{value}</code></blockquote>"
         body = template
         for key, item in {
             "tool": safe_tool,
@@ -3290,6 +3451,7 @@ class OpenAgent(ModuleBase):
                 tool_error = self._invalid_tool_call_error(answer or "")
                 if tool_error:
                     invalid_tool_retries += 1
+                    agent_log.append(f"tool_error: {tool_error[:220]}")
                     if invalid_tool_retries > 2:
                         return tool_error, agent_log, thinking_notes
                     messages.append({"role": "assistant", "content": answer or ""})
@@ -3298,6 +3460,7 @@ class OpenAgent(ModuleBase):
                             "role": "user",
                             "content": (
                                 f"{tool_error}\n\n"
+                                "Это результат валидации твоего tool_call. Исправь tool_call и повтори прямо сейчас. "
                                 "Fix the tool call and try again now. Use only valid OpenAgent tool names, "
                                 "valid JSON, and args as a JSON object. If no tool is needed, answer the user "
                                 "in plain text with no JSON/tool_call."
@@ -3487,7 +3650,11 @@ class OpenAgent(ModuleBase):
             try:
                 payload = json.loads(raw)
             except Exception as exc:
-                return f"Ошибка tool call: модель вернула некорректный JSON ({exc})."
+                preview = raw.strip().replace("\n", " ")[:500]
+                return (
+                    f"Ошибка tool call: модель вернула некорректный JSON ({exc}).\n"
+                    f"Фрагмент: {preview}"
+                )
             payloads = payload if isinstance(payload, list) else [payload]
             for item in payloads:
                 if not isinstance(item, dict):
@@ -3496,8 +3663,11 @@ class OpenAgent(ModuleBase):
                 if not tool_name:
                     continue
                 if tool_name not in self._tool_names():
-                    available = ", ".join(sorted(self._tool_names())[:30])
-                    return f"Ошибка tool call: неизвестный инструмент '{tool_name}'. Доступные примеры: {available}."
+                    candidates = sorted(self._tool_names())
+                    nearest = ", ".join(difflib.get_close_matches(tool_name, candidates, n=5, cutoff=0.45))
+                    available = ", ".join(candidates[:30])
+                    hint = f" Ближайшие: {nearest}." if nearest else ""
+                    return f"Ошибка tool call: неизвестный инструмент '{tool_name}'.{hint} Доступные примеры: {available}."
                 args_raw = item.get("args") or {}
                 if not isinstance(args_raw, dict):
                     return f"Ошибка tool call: args для '{tool_name}' должен быть JSON-объектом."
@@ -3540,12 +3710,30 @@ class OpenAgent(ModuleBase):
         calls = self._extract_tool_calls(text)
         return calls[0] if calls else None
 
+    def _compact_agent_log(self, log: list[str]) -> list[str]:
+        if not log:
+            return []
+        compacted: list[str] = []
+        current = str(log[0])
+        count = 1
+        for raw in log[1:]:
+            item = str(raw)
+            if item == current:
+                count += 1
+                continue
+            compacted.append(f"{current} * {count}" if count > 1 else current)
+            current = item
+            count = 1
+        compacted.append(f"{current} * {count}" if count > 1 else current)
+        return compacted
+
     def _agent_log_html(self, log: list[str]) -> str:
         if not log:
             return ""
+        compacted = self._compact_agent_log(log)
         return (
             "\n\n<blockquote expandable><b>Agent Log</b>\n"
-            f"{html.escape(chr(10).join(log))}</blockquote>"
+            f"{html.escape(chr(10).join(compacted))}</blockquote>"
         )
 
     def _uses_completion_tokens(self, provider: str) -> bool:
@@ -3747,7 +3935,7 @@ class OpenAgent(ModuleBase):
         content = f"{title}\n\nЗапрос:\n{prompt}\n\nОтвет:\n{answer}"
         content += "\n\nThinking:\n" + self._format_thinking_notes(thinking_notes)
         if agent_log:
-            content += "\n\nAgent Log:\n" + "\n".join(agent_log)
+            content += "\n\nAgent Log:\n" + "\n".join(self._compact_agent_log(agent_log))
         data = content.encode("utf-8")
 
         def make_buf() -> io.BytesIO:
@@ -4264,6 +4452,97 @@ class OpenAgent(ModuleBase):
             return "Errors are reported through the MCUB kernel error handler"
         return f"Unknown utility tool: {tool_name}"
 
+    async def _todo_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        await asyncio.sleep(0)
+        attrs = self._parse_xml_attrs(attrs_raw)
+        items = self._todo_items()
+
+        if tool_name == "todo.add":
+            text = (
+                attrs.get("text")
+                or attrs.get("task")
+                or attrs.get("item")
+                or attrs.get("title")
+                or body.strip()
+            )
+            text = self._todo_parse_html_text(text)
+            if not text:
+                return "todo text is required"
+            status = self._todo_normalize_status(attrs.get("status") or attrs.get("state") or "pending")
+            items.append({"text": text[:500], "status": status})
+            await self._save_todo_items(items)
+            return "TODO item added\n" + self._format_todo_placeholder()
+
+        if tool_name == "todo.closeall":
+            if not items:
+                return "TODO list is empty"
+            for item in items:
+                item["status"] = "closed"
+            await self._save_todo_items(items)
+            return "All TODO items closed\n" + self._format_todo_placeholder()
+
+        if tool_name == "todo.clear":
+            if not items:
+                return "TODO list is already empty"
+            await self._save_todo_items([])
+            return "TODO list cleared"
+
+        if tool_name == "todo.current":
+            idx, error = self._todo_target_index(items, attrs, body)
+            if idx is None:
+                return error
+            for i, item in enumerate(items):
+                if item.get("status") == "open" and i != idx:
+                    item["status"] = "pending"
+            items[idx]["status"] = "open"
+            await self._save_todo_items(items)
+            return f"Current TODO: {items[idx]['text']}\n" + self._format_todo_placeholder()
+
+        if tool_name == "todo.delete":
+            idx, error = self._todo_target_index(items, attrs, body)
+            if idx is None:
+                return error
+            removed = items.pop(idx)
+            await self._save_todo_items(items)
+            return f"TODO deleted: {removed['text']}\n" + self._format_todo_placeholder()
+
+        if tool_name == "todo.close":
+            idx, error = self._todo_target_index(items, attrs, body)
+            if idx is None:
+                return error
+            items[idx]["status"] = "closed"
+            await self._save_todo_items(items)
+            return f"TODO closed: {items[idx]['text']}\n" + self._format_todo_placeholder()
+
+        if tool_name == "todo.edit":
+            target_body = body
+            new_text = (
+                attrs.get("new")
+                or attrs.get("value")
+                or attrs.get("text")
+                or ""
+            ).strip()
+            if not attrs.get("index") and "|" in (body or ""):
+                target_part, new_part = body.split("|", 1)
+                target_body = target_part.strip()
+                if not new_text:
+                    new_text = new_part.strip()
+            idx, error = self._todo_target_index(items, attrs, target_body)
+            if idx is None:
+                return error
+            if not new_text:
+                return "new todo text is required"
+            parsed_text = self._todo_parse_html_text(new_text)
+            if not parsed_text:
+                return "new todo text is empty"
+            items[idx]["text"] = parsed_text[:500]
+            if attrs.get("status") or attrs.get("state"):
+                items[idx]["status"] = self._todo_normalize_status(attrs.get("status") or attrs.get("state") or "")
+            await self._save_todo_items(items)
+            return f"TODO updated: {items[idx]['text']}\n" + self._format_todo_placeholder()
+
+        return f"Unknown todo tool: {tool_name}"
+
     async def _thinking_note_tool(self, attrs_raw: str, body: str) -> str:
         await asyncio.sleep(0)
         note = self._thinking_note_text(attrs_raw, body)
@@ -4450,6 +4729,13 @@ class OpenAgent(ModuleBase):
             "context.reply_context": "_context_registry_tool",
             "context.media_context": "_context_registry_tool",
             "thinking.note": "_thinking_note_tool",
+            "todo.add": "_todo_registry_tool",
+            "todo.delete": "_todo_registry_tool",
+            "todo.edit": "_todo_registry_tool",
+            "todo.current": "_todo_registry_tool",
+            "todo.close": "_todo_registry_tool",
+            "todo.closeall": "_todo_registry_tool",
+            "todo.clear": "_todo_registry_tool",
             "code.read_docs": "_fetch_mcub_docs",
             "utility.token_usage": "_utility_registry_tool",
             "utility.placeholders": "_utility_registry_tool",
@@ -4530,7 +4816,10 @@ class OpenAgent(ModuleBase):
             is_misc = True
             
         if not handler_method:
-            return f"Error: Tool <{name}> not found in registry."
+            candidates = sorted(self._tool_names())
+            nearest = ", ".join(difflib.get_close_matches(name, candidates, n=5, cutoff=0.45))
+            suggestion = f" Closest matches: {nearest}." if nearest else ""
+            return f"Error: Tool <{name}> not found in registry.{suggestion}"
 
         agent_log.append(name)
         if name == "thinking.note" and thinking_notes is not None:
@@ -4595,8 +4884,8 @@ class OpenAgent(ModuleBase):
                 chat = attrs.get("chat") or attrs.get("to") or attrs.get("target")
                 if name == "message.send_current":
                     chat = None
-                return await self._send_userbot_message(body.strip(), source_event, chat=chat)
-            if method_name == "_run_mcub_command" and not kwargs.get("command"):
+                result = await self._send_userbot_message(body.strip(), source_event, chat=chat)
+            elif method_name == "_run_mcub_command" and not kwargs.get("command"):
                 command_map = {
                     "mcub.modules": "modules",
                     "mcub.config": "cfg",
@@ -4612,10 +4901,31 @@ class OpenAgent(ModuleBase):
                     or attrs.get("query")
                     or ""
                 )
-            if method_name == "_save_skill":
+                result = await handler_method(**kwargs)
+            elif method_name == "_save_skill":
                 attrs = self._parse_xml_attrs(attrs_raw)
-                return await self._skills_registry_tool(name, attrs_raw, body or attrs.get("content", ""))
+                result = await self._skills_registry_tool(name, attrs_raw, body or attrs.get("content", ""))
+            else:
+                result = await handler_method(**kwargs)
 
-            return await handler_method(**kwargs)
+            if status_event and name.startswith("todo."):
+                elapsed = time.monotonic() - started_at if started_at is not None else None
+                await self._show_agent_action(
+                    status_event,
+                    f"Updated {name}",
+                    result,
+                    agent_log,
+                    tool_name=name,
+                    elapsed=elapsed,
+                    thinking_notes=thinking_notes,
+                )
+            return result
         except Exception as e:
-            return f"Tool <{name}> execution failed: {e}"
+            err_type = type(e).__name__
+            details = str(e).strip() or "no details"
+            return (
+                f"Tool <{name}> execution failed.\n"
+                f"Error type: {err_type}\n"
+                f"Details: {details[:1200]}\n"
+                "Fix args and retry with a corrected tool call."
+            )
