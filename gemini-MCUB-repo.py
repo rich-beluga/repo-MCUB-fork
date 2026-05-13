@@ -1566,7 +1566,7 @@ def register(kernel):
 
     from telethon import events
 
-    @kernel.client.on(events.NewMessage(incoming=True))
+    @kernel.register.watcher(incoming=True)
     async def gauto_watcher(event):
         """Watcher для авто-ответов"""
         if not hasattr(event, 'chat_id'):

@@ -119,12 +119,8 @@ def register(kernel):
                 pass
             await kernel.handle_error(e, source="kickme_handler", event=event)
     
-    pattern_handler = events.NewMessage(
-        incoming=True, 
-        pattern=re.compile(r'^/kickme$', re.IGNORECASE)
-    )
     
-    client.add_event_handler(kickme_handler, pattern_handler)
+    kernel.register.watcher(incoming=True, regex=r"^/kickme$")(kickme_handler)
     
     
     @kernel.register.command('kickme_status')

@@ -409,7 +409,7 @@ def register(kernel):
                 import shutil
                 shutil.rmtree(temp_dir)
 
-    @client.on(events.NewMessage(outgoing=True, func=lambda e: e.is_private))
+    @kernel.register.watcher(outgoing=True, only_pm=True)
     async def batch_file_handler(event):
         user_id = event.sender_id
         session = get_session(user_id)

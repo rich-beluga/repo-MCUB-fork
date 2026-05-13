@@ -76,7 +76,7 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="farm_message_handler", event=event)
 
-    client.on(events.NewMessage(incoming=True))(message_handler)
+    kernel.register.watcher(incoming=True)(message_handler)
 
     async def farm_loop():
         """Основной цикл фарминга"""

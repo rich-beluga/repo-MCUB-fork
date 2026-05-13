@@ -196,7 +196,7 @@ def register(kernel):
             await kernel.handle_error(e, source="show_edited", event=event)
             await event.edit("🌩️ <b>error, check logs</b>", parse_mode='html')
 
-    @client.on(events.NewMessage)
+    @kernel.register.watcher()
     async def cache_message(event):
         try:
             if not await is_logging_enabled(event.chat_id):
@@ -217,7 +217,7 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="cache_message", event=event)
 
-    @client.on(events.MessageDeleted)
+    @kernel.register.event("messagedeleted")
     async def log_deleted(event):
         try:
             if not await is_logging_enabled(event.chat_id):
@@ -238,7 +238,7 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="log_deleted", event=event)
 
-    @client.on(events.MessageEdited)
+    @kernel.register.event("messageedited")
     async def log_edited(event):
 
         try:

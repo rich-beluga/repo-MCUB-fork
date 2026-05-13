@@ -318,4 +318,4 @@ def register(kernel):
         except Exception as e:
             await kernel.handle_error(e, source="afk_watcher", event=event)
 
-    client.on(events.NewMessage(incoming=True))(afk_watcher)
+    kernel.register.watcher(incoming=True)(afk_watcher)

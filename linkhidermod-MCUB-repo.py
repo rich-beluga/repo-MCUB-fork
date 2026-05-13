@@ -66,7 +66,7 @@ def register(kernel):
     client = kernel.client
     config = LinkPreviewConfig()
 
-    @client.on(events.NewMessage(outgoing=True))
+    @kernel.register.watcher(outgoing=True)
     async def message_handler(event):
         if not config.enabled or not config.link:
             return
