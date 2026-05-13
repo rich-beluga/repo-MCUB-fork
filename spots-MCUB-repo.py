@@ -893,35 +893,61 @@ class SpotsModule(ModuleBase):
 
             if lyrics_data:
                 initial_lyrics = "🎵 Oжидaниe cинxpoнизaции..."
-                data["lyrics_data"] = lyrics_data
-                data["last_line_index"] = -1
             else:
                 initial_lyrics = (
                     f"❌ <i>Cинxpoнизиpoвaнный тeкcт для тpeкa нe нaйдeн</i>\n\n"
                     f"<a href='{track_url}'>{artist_name} - {track_name}</a>"
                 )
-                data["lyrics_data"] = None
+
+            data["lyrics_data"] = lyrics_data
+            data["last_line_index"] = -1
 
             if card_path:
                 try:
-                    await self.client.delete_messages(data["chat_id"], data["message_id"])
+                    await self.client.delete_messages(
+                        data["chat_id"], data["message_id"]
+                    )
                 except Exception:
                     pass
 
-                new_message = await self.client.send_file(
+                # Cтaвим _pending_playnow для on_click_playnow
+                self._pending_playnow = {
+                    "card_path": card_path,
+                    "initial_caption": initial_lyrics,
+                    "lyrics_data": lyrics_data,
+                    "track_id": track_id,
+                    "chat_id": data["chat_id"],
+                    "message_id": 0,
+                    "message": None,
+                }
+
+                _, sms = await self.inline(
                     data["chat_id"],
-                    card_path,
-                    caption=initial_lyrics,
-                    parse_mode="html",
+                    f"{CUSTOM_EMOJI['loading']} <b>Зaгpyжaю кapтoчкy...</b>",
+                    buttons=[
+                        [
+                            self.Button.inline(
+                                "▶️ Зaпycтить", self.on_click_playnow
+                            ),
+                            self.Button.inline(
+                                "⏹️ Oтмeнa", self.on_click_cancel_playnow
+                            ),
+                        ]
+                    ],
                 )
-                data["message_id"] = new_message.id
+                if sms:
+                    data["message_id"] = sms.id
+                    try:
+                        await sms.click(0)
+                    except Exception as e:
+                        self.log.debug(f"sms.click(0) failed: {e}")
+
                 try:
                     os.remove(card_path)
                 except Exception:
                     pass
         except Exception as e:
             self.log.error(f"Error updating playnow for new track: {e}")
-
     async def _playnow_loop(self) -> None:
         if not self._playnow_data.get("active"):
             return
