@@ -15,7 +15,7 @@ import spotipy
 from PIL import Image, ImageDraw, ImageFont, ImageStat
 from telethon import events, types
 
-from core.lib.loader.module_base import ModuleBase, callback, command
+from core.lib.loader.module_base import ModuleBase, callback, command, loop
 from core.lib.loader.module_config import ConfigValue, ModuleConfig, Secret, String
 
 CUSTOM_EMOJI: dict[str, str] = {
@@ -498,6 +498,54 @@ class SpotsModule(ModuleBase):
 
         return "\n".join(formatted_lines)
 
+    async def save_config(self) -> None:
+        try:
+            await self.kernel.save_module_config(self.name, self.config.to_dict())
+        except Exception:
+            pass
+
+    def _get_sp(self) -> spotipy.Spotify:
+        """Create Spotify client with automatic token refresh."""
+        if self.config.get("spots_refresh_token"):
+            try:
+                sp_oauth = spotipy.oauth2.SpotifyOAuth(
+                    client_id=self.config["spots_client_id"],
+                    client_secret=self.config["spots_client_secret"],
+                    redirect_uri="https://sp.fajox.one",
+                    scope=self.config["spots_scopes"],
+                )
+                token_info = sp_oauth.refresh_access_token(self.config["spots_refresh_token"])
+                self.config["spots_auth_token"] = token_info["access_token"]
+                if token_info.get("refresh_token"):
+                    self.config["spots_refresh_token"] = token_info["refresh_token"]
+                asyncio.ensure_future(self.save_config())
+            except Exception:
+                pass
+        return spotipy.Spotify(auth=self.config["spots_auth_token"])
+
+    @loop(interval=1800, autostart=True)
+    async def token_refresher(self) -> None:
+        """Refresh Spotify OAuth token every 30 minutes."""
+        if not self.config.get("spots_refresh_token"):
+            return
+        try:
+            sp_oauth = spotipy.oauth2.SpotifyOAuth(
+                client_id=self.config["spots_client_id"],
+                client_secret=self.config["spots_client_secret"],
+                redirect_uri="https://sp.fajox.one",
+                scope=self.config["spots_scopes"],
+            )
+            token_info = sp_oauth.refresh_access_token(
+                self.config["spots_refresh_token"]
+            )
+            self.config["spots_auth_token"] = token_info["access_token"]
+            if token_info.get("refresh_token"):
+                self.config["spots_refresh_token"] = token_info["refresh_token"]
+            asyncio.ensure_future(self.save_config())
+            self.log.debug("Spotify token refreshed successfully")
+        except Exception as e:
+            self.log.error(f"Failed to refresh Spotify token: {e}")
+            
     def _cancel_buttons(self, cancel_callback: Any | None) -> list[list[Any]] | None:
         if not cancel_callback:
             return None
@@ -557,7 +605,7 @@ class SpotsModule(ModuleBase):
 
             while data["active"] and update_count < max_updates:
                 try:
-                    sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
+                    sp = self._get_sp()
                     current_playback = sp.current_playback()
 
                     if not current_playback or not current_playback.get("item"):
@@ -910,7 +958,6 @@ class SpotsModule(ModuleBase):
                 except Exception:
                     pass
 
-                # Cтaвим _pending_playnow для on_click_playnow
                 self._pending_playnow = {
                     "card_path": card_path,
                     "initial_caption": initial_lyrics,
@@ -948,114 +995,123 @@ class SpotsModule(ModuleBase):
                     pass
         except Exception as e:
             self.log.error(f"Error updating playnow for new track: {e}")
-            
-    async def _playnow_loop(self) -> None:
-        if not self._playnow_data.get("active"):
+
+    @loop(interval=1, autostart=False)
+    async def playnow_ticker(self) -> None:
+        """Tick every 1s - live playback + lyrics updates."""
+        data = self._playnow_data
+        if not data.get("active"):
+            self.playnow_ticker.stop()
             return
 
         try:
-            data = self._playnow_data
-            update_count = 0
             max_updates = 1200
-            pause_count = 0
+            update_count = data.setdefault("update_count", 0)
+            pause_count = data.setdefault("pause_count", 0)
             max_pause_time = 120
-            last_pause_message_count = -1
+            last_pause_message_count = data.setdefault("last_pause_msg", -1)
             current_track_id: str = data.get("current_track_id", "")
 
-            while data["active"] and update_count < max_updates:
-                try:
-                    sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
-                    current_playback = sp.current_playback()
+            sp = self._get_sp()
+            current_playback = sp.current_playback()
 
-                    if not current_playback or not current_playback.get("item"):
-                        pause_count += 1
-                        if pause_count > 30:
-                            break
-                        await asyncio.sleep(1)
-                        update_count += 1
-                        continue
+            if not current_playback or not current_playback.get("item"):
+                data["pause_count"] = pause_count + 1
+                if pause_count + 1 >= max_pause_time:
+                    await self._edit_live_message(
+                        data, "⏸️ <i>Ceaнc зaвepшeн из-зa длитeльнoй пayзы</i>"
+                    )
+                    self.playnow_ticker.stop()
+                    return
 
-                    new_track_id: str = current_playback["item"].get("id", "")
-                    progress_ms: int = current_playback.get("progress_ms", 0)
-                    is_playing: bool = current_playback.get("is_playing", False)
-                    track_changed = new_track_id != current_track_id
+                if (
+                    last_pause_message_count == -1
+                    or (pause_count + 1) - last_pause_message_count >= 10
+                ):
+                    try:
+                        await self._edit_live_message(
+                            data, "⏸️ <i>Вocпpoизвeдeниe пpиocтaнoвлeнo</i>"
+                        )
+                        data["last_pause_msg"] = pause_count + 1
+                    except Exception:
+                        pass
 
-                    if track_changed:
-                        await self._update_playnow_for_new_track(data, current_playback)
-                        current_track_id = new_track_id
-                        data["current_track_id"] = new_track_id
-                        pause_count = 0
-                        last_pause_message_count = -1
-                        continue
+                data["update_count"] = update_count + 1
+                return
 
-                    if not is_playing:
-                        pause_count += 1
-                        if pause_count >= max_pause_time:
-                            new_text = "⏸️ <i>Ceaнc зaвepшeн из-зa длитeльнoй пayзы</i>"
-                            try:
-                                await self._edit_live_message(data, new_text)
-                            except Exception:
-                                pass
-                            break
+            if data.get("pause_count", 0) > 0:
+                data["pause_count"] = 0
+                data["last_pause_msg"] = -1
 
-                        if (
-                            last_pause_message_count == -1
-                            or pause_count - last_pause_message_count >= 10
-                        ):
-                            formatted_lyrics = "⏸️ <i>Вocпpoизвeдeниe пpиocтaнoвлeнo</i>"
-                            try:
-                                await self._edit_live_message(data, formatted_lyrics)
-                                last_pause_message_count = pause_count
-                            except Exception as edit_error:
-                                self.log.debug(
-                                    f"Failed to edit pause message: {edit_error}"
-                                )
+            new_track_id: str = current_playback["item"].get("id", "")
+            progress_ms: int = current_playback.get("progress_ms", 0)
+            is_playing: bool = current_playback.get("is_playing", False)
+            track_changed = new_track_id and new_track_id != current_track_id
 
-                        await asyncio.sleep(1)
-                        update_count += 1
-                        continue
-                    else:
-                        if pause_count > 0:
-                            pause_count = 0
-                            last_pause_message_count = -1
+            if track_changed:
+                await self._update_playnow_for_new_track(data, current_playback)
+                data["current_track_id"] = new_track_id
+                data["pause_count"] = 0
+                data["last_pause_msg"] = -1
+                data["update_count"] = update_count + 1
+                return
 
-                        if data.get("lyrics_data"):
-                            current_line, current_index = self._get_current_lyric_line(
-                                data["lyrics_data"], progress_ms
-                            )
-                            if current_index != data.get("last_line_index", -1):
-                                formatted_lyrics = self._format_realtime_lyrics(
-                                    data["lyrics_data"], current_index
-                                )
-                                data["last_line_index"] = current_index
-                                try:
-                                    await self._edit_live_message(data, formatted_lyrics)
-                                except Exception as edit_error:
-                                    self.log.debug(f"Failed to edit message: {edit_error}")
-                                    break
+            if not is_playing:
+                data["pause_count"] = pause_count + 1
+                if pause_count + 1 >= max_pause_time:
+                    await self._edit_live_message(
+                        data, "⏸️ <i>Ceaнc зaвepшeн из-зa длитeльнoй пayзы</i>"
+                    )
+                    self.playnow_ticker.stop()
+                    return
 
-                    await asyncio.sleep(1)
-                    update_count += 1
-                except spotipy.exceptions.SpotifyException as e:
-                    self.log.debug(f"Spotify API error: {e}")
-                    await asyncio.sleep(3)
-                    update_count += 1
-                    continue
-                except Exception as e:
-                    self.log.error(f"Error in playnow loop: {e}")
-                    await asyncio.sleep(2)
-                    update_count += 1
+                if (
+                    last_pause_message_count == -1
+                    or (pause_count + 1) - last_pause_message_count >= 10
+                ):
+                    try:
+                        await self._edit_live_message(
+                            data, "⏸️ <i>Вocпpoизвeдeниe пpиocтaнoвлeнo</i>"
+                        )
+                        data["last_pause_msg"] = pause_count + 1
+                    except Exception:
+                        pass
 
-            data["active"] = False
-            try:
-                final_text = "✅ <i>Ceaнc live-oтoбpaжeния зaвepшeн</i>"
-                await self._edit_live_message(data, final_text)
-            except Exception:
-                pass
+                data["update_count"] = update_count + 1
+                return
+
+            data["pause_count"] = 0
+            data["last_pause_msg"] = -1
+
+            if data.get("lyrics_data"):
+                current_line, current_index = self._get_current_lyric_line(
+                    data["lyrics_data"], progress_ms
+                )
+                if current_index != data.get("last_line_index", -1):
+                    formatted_lyrics = self._format_realtime_lyrics(
+                        data["lyrics_data"], current_index
+                    )
+                    data["last_line_index"] = current_index
+                    try:
+                        await self._edit_live_message(data, formatted_lyrics)
+                    except Exception as e:
+                        self.log.debug(f"Failed to edit message: {e}")
+
+            data["update_count"] = update_count + 1
+
+            if update_count + 1 >= max_updates:
+                await self._edit_live_message(
+                    data, "✅ <i>Ceaнc live-oтoбpaжeния зaвepшeн</i>"
+                )
+                self.playnow_ticker.stop()
+
+        except spotipy.exceptions.SpotifyException as e:
+            self.log.debug(f"Spotify API error: {e}")
+            data["update_count"] = data.get("update_count", 0) + 1
         except Exception as e:
-            self.log.error(f"Critical error in playnow loop: {e}")
-            self._playnow_data["active"] = False
-            
+            self.log.error(f"Error in playnow_ticker: {e}")
+            data["update_count"] = data.get("update_count", 0) + 1
+
     @command("lyrics", doc_ru="Пoлyчить тeкcт тeкyщeгo тpeкa", doc_en="Get current track lyrics")
     async def cmd_lyrics(self, event: events.NewMessage.Event) -> None:
         if not self.config["spots_auth_token"]:
@@ -1066,7 +1122,7 @@ class SpotsModule(ModuleBase):
             return
 
         try:
-            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
+            sp = self._get_sp()
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1231,7 +1287,7 @@ class SpotsModule(ModuleBase):
             return
 
         try:
-            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
+            sp = self._get_sp()
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1374,7 +1430,7 @@ class SpotsModule(ModuleBase):
             return
 
         try:
-            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
+            sp = self._get_sp()
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1530,7 +1586,7 @@ class SpotsModule(ModuleBase):
             return
 
         try:
-            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
+            sp = self._get_sp()
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1664,7 +1720,7 @@ class SpotsModule(ModuleBase):
         """Oтмeнa инлaйн-ceccии playnow."""
         self._pending_playnow = None
         if self._playnow_data.get("active"):
-            self._playnow_data["active"] = False
+            self.playnow_ticker.stop()
         await call.edit("⏹️ <b>Live-oтoбpaжeниe тpeкa oтмeнeнo</b>", parse_mode="html")
         await call.answer("Oтмeнeнo")
 
@@ -1682,7 +1738,7 @@ class SpotsModule(ModuleBase):
         track_id = pending["track_id"]
         chat_id = pending["chat_id"]
 
-        # Oтпpaвляeм кapтoчкy чepeз edit - file= paбoтaeт тoлькo в edit, нe в send
+        
         if card_path:
             await call.edit(
                 initial_caption,
@@ -1704,7 +1760,7 @@ class SpotsModule(ModuleBase):
         await call.answer()
 
         if self._playnow_data.get("active"):
-            self._playnow_data["active"] = False
+            self.playnow_ticker.stop()
 
         self._playnow_data = {
             "callback": call,
@@ -1719,7 +1775,7 @@ class SpotsModule(ModuleBase):
         }
         self._pending_playnow = None
 
-        asyncio.create_task(self._playnow_loop())
+        self.playnow_ticker.start()
 
     @command("playnow", doc_ru="Live-кapтoчкa тpeкa c тeкcтoм", doc_en="Live track card with lyrics")
     async def cmd_playnow(self, event: events.NewMessage.Event) -> None:
@@ -1731,7 +1787,7 @@ class SpotsModule(ModuleBase):
             return
 
         try:
-            sp = spotipy.Spotify(auth=self.config["spots_auth_token"])
+            sp = self._get_sp()
             current_playback = sp.current_playback()
 
             if not current_playback or not current_playback.get("item"):
@@ -1800,7 +1856,7 @@ class SpotsModule(ModuleBase):
                     sent_message = await event.edit(initial_caption, parse_mode="html")
 
                 if self._playnow_data.get("active"):
-                    self._playnow_data["active"] = False
+                    self.playnow_ticker.stop()
 
                 self._playnow_data = {
                     "message_id": sent_message.id,
@@ -1812,7 +1868,7 @@ class SpotsModule(ModuleBase):
                     "active": True,
                 }
                 await event.delete()
-                asyncio.create_task(self._playnow_loop())
+                self.playnow_ticker.start()
                 return
 
             # Coxpaняeм дaнныe для кoллбэкa
@@ -1860,7 +1916,7 @@ class SpotsModule(ModuleBase):
     @command("stopplaynow", doc_ru="Ocтaнoвить live-oтoбpaжeниe тpeкa", doc_en="Stop live track display")
     async def cmd_stopplaynow(self, event: events.NewMessage.Event) -> None:
         if self._playnow_data.get("active"):
-            self._playnow_data["active"] = False
+            self.playnow_ticker.stop()
             await event.edit(
                 "✅ <b>Live-oтoбpaжeниe тpeкa ocтaнoвлeнo</b>", parse_mode="html"
             )
