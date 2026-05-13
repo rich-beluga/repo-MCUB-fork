@@ -2,8 +2,8 @@
 name: MCUB-modules-creator
 description: Create and update debug MCUB userbot modules in app-debug using the MCUB module API, class-style modules, and inline form/callback docs.
 keywords:
-  - модуль
-  - модули
+  - мoдyль
+  - мoдyли
   - module
   - modules
   - app-debug
@@ -110,11 +110,11 @@ class ExampleModule(loader.ModuleBase):
     version = "1.0.0"
     author = "@you"
     description: dict[str, str] = {
-        "ru": "Описание модуля",
+        "ru": "Oпиcaниe мoдyля",
         "en": "Module description",
     }
 
-    @loader.command("example", doc_ru="Пример", doc_en="Example")
+    @loader.command("example", doc_ru="Пpимep", doc_en="Example")
     async def cmd_example(self, event: events.NewMessage.Event) -> None:
         await self.edit(event, "Example works!")
 ```

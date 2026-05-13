@@ -4,7 +4,7 @@
 # requires: matplotlib
 # author: nercymods
 # version: 2.0.2
-# description: en: Module for viewing the top list in chat / ru: Модуль просмотра топ-листа в чате
+# description: en: Module for viewing the top list in chat / ru: Moдyль пpocмoтpa тoп-лиcтa в чaтe
 # ----------------------- End ------------------------------
 
 import asyncio
@@ -58,7 +58,7 @@ def register(kernel):
         return [cmap(i) for i in np.linspace(0, 1, n)]
 
     @kernel.register.command('top')
-    # ru: топ юзеров в чате / en: top users in chat
+    # ru: тoп юзepoв в чaтe / en: top users in chat
     async def top_handler(event):
         try:
             await event.edit("🕒 Message counting has started, please wait...")

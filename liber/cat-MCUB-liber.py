@@ -4,7 +4,7 @@
 # requires: aiohttp
 # author: @Hairpin00
 # version: 1.0.0
-# description: ru: Случайное фото кота / en: Random cat photo
+# description: ru: Cлyчaйнoe фoтo кoтa / en: Random cat photo
 # ----------------------- End ------------------------------
 import aiohttp
 
@@ -14,10 +14,10 @@ def register(kernel):
     # strings ru/en
     strings = {
         'ru': {
-            'searching': "<tg-emoji emoji-id='5339287777978643630'>🐱</tg-emoji> Ищем котика...",
-            'api_error': "<tg-emoji emoji-id='5121063440311386962'>😿</tg-emoji> Ошибка API",
-            'error_caption': "<tg-emoji emoji-id='5121063440311386962'>😿</tg-emoji> Ошибка",
-            'full_logs': "Полные логи",
+            'searching': "<tg-emoji emoji-id='5339287777978643630'>🐱</tg-emoji> Ищeм кoтикa...",
+            'api_error': "<tg-emoji emoji-id='5121063440311386962'>😿</tg-emoji> Oшибкa API",
+            'error_caption': "<tg-emoji emoji-id='5121063440311386962'>😿</tg-emoji> Oшибкa",
+            'full_logs': "Пoлныe лoги",
             'photo_caption': "<tg-emoji emoji-id='5337019352346553898'>🐱</tg-emoji>"
         },
         'en': {
@@ -31,7 +31,7 @@ def register(kernel):
     lang_strings = strings.get(language, strings['ru'])
 
     @kernel.register.command('cat')
-    # ru: отправить котика / en: send random cat
+    # ru: oтпpaвить кoтикa / en: send random cat
     async def cat_handler(event):
         try:
 

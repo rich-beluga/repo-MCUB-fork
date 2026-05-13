@@ -10,8 +10,8 @@ keywords:
   - architecture
   - stack
   - files
-  - навигация
-  - структура
+  - нaвигaция
+  - cтpyктypa
 ---
 
 # Repository Navigator

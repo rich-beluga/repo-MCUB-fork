@@ -40,24 +40,24 @@ LOCALIZATION = {
         'cleaning': 'Cleaning temporary files...'
     },
     'ru': {
-        'usage': 'Использование: <code>.yt [URL]</code> или <code>.youtube [URL]</code>',
-        'downloading': 'Скачивание видео с YouTube...',
-        'success': 'Видео успешно скачано!',
-        'no_url': 'Пожалуйста, укажите ссылку на YouTube',
-        'invalid_url': 'Некорректная ссылка на YouTube',
-        'download_failed': 'Не удалось скачать видео',
-        'file_too_large': 'Файл видео слишком большой (лимит Telegram)',
-        'error': 'Произошла ошибка',
-        'stats': 'Информация о видео:',
-        'duration': 'Длительность:',
-        'resolution': 'Разрешение:',
-        'size': 'Размер:',
-        'author': 'Канал:',
-        'title': 'Название:',
-        'views': 'Просмотров:',
-        'upload_date': 'Загружено:',
-        'processing': 'Обработка видео...',
-        'cleaning': 'Очистка временных файлов...'
+        'usage': 'Иcпoльзoвaниe: <code>.yt [URL]</code> или <code>.youtube [URL]</code>',
+        'downloading': 'Cкaчивaниe видeo c YouTube...',
+        'success': 'Видeo ycпeшнo cкaчaнo!',
+        'no_url': 'Пoжaлyйcтa, yкaжитe ccылкy нa YouTube',
+        'invalid_url': 'Heкoppeктнaя ccылкa нa YouTube',
+        'download_failed': 'He yдaлocь cкaчaть видeo',
+        'file_too_large': 'Фaйл видeo cлишкoм бoльшoй (лимит Telegram)',
+        'error': 'Пpoизoшлa oшибкa',
+        'stats': 'Инфopмaция o видeo:',
+        'duration': 'Длитeльнocть:',
+        'resolution': 'Paзpeшeниe:',
+        'size': 'Paзмep:',
+        'author': 'Кaнaл:',
+        'title': 'Haзвaниe:',
+        'views': 'Пpocмoтpoв:',
+        'upload_date': 'Зaгpyжeнo:',
+        'processing': 'Oбpaбoткa видeo...',
+        'cleaning': 'Oчиcткa вpeмeнныx фaйлoв...'
     }
 }
 
@@ -110,7 +110,7 @@ def register(kernel):
     language = kernel.config.get('language', 'en')
     lang_strings = LOCALIZATION.get(language, LOCALIZATION['en'])
 
-    @kernel.register.command('yt', alias=['youtube', 'ytdl', 'видео'])
+    @kernel.register.command('yt', alias=['youtube', 'ytdl', 'видeo'])
     async def youtube_downloader(event):
         try:
             args = event.text.split(maxsplit=1)
@@ -185,7 +185,7 @@ def register(kernel):
                 except Exception as send_error:
                     await kernel.edit_with_html(
                         event,
-                        f"{CUSTOM_EMOJI['error']} <b>Не удалось отправить:</b>\n<code>{str(send_error)}</code>"
+                        f"{CUSTOM_EMOJI['error']} <b>He yдaлocь oтпpaвить:</b>\n<code>{str(send_error)}</code>"
                     )
         except Exception as e:
             await kernel.handle_error(e, source="youtube_downloader", event=event)

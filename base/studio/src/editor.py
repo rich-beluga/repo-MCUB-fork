@@ -130,7 +130,7 @@ def _tokenise(line: str) -> List[Token]:
             i += 1
             continue
 
-        # Anything else — normal
+        # Anything else - normal
         tokens.append((ch, curses.color_pair(CP_NORMAL)))
         i += 1
 
@@ -141,20 +141,20 @@ class TextEditor:
     Curses multi-line editor with Python syntax highlighting.
 
     Keybindings (when render() is active):
-      Arrow keys      — move cursor
-      Home / End      — start / end of line
-      Page Up/Down    — ±20 lines
-      Backspace       — delete left / join lines
-      Delete          — delete right
-      Tab             — insert 4 spaces + smart indent
-      Enter           — new line + auto-indent (adds +4 after ':')
-      Ctrl+A          — start of line
-      Ctrl+E          — end of line
-      Ctrl+K          — kill to end of line
-      Ctrl+U          — kill to start of line
-      Ctrl+Z          — undo (single level)
-      Ctrl+S          — (caller checks, returns KEY_SAVE sentinel)
-      Ctrl+Q / ESC    — (caller checks, returns KEY_QUIT sentinel)
+      Arrow keys      - move cursor
+      Home / End      - start / end of line
+      Page Up/Down    - ±20 lines
+      Backspace       - delete left / join lines
+      Delete          - delete right
+      Tab             - insert 4 spaces + smart indent
+      Enter           - new line + auto-indent (adds +4 after ':')
+      Ctrl+A          - start of line
+      Ctrl+E          - end of line
+      Ctrl+K          - kill to end of line
+      Ctrl+U          - kill to start of line
+      Ctrl+Z          - undo (single level)
+      Ctrl+S          - (caller checks, returns KEY_SAVE sentinel)
+      Ctrl+Q / ESC    - (caller checks, returns KEY_QUIT sentinel)
     """
 
     KEY_SAVE  = -1000   # sentinel: save requested
@@ -243,13 +243,13 @@ class TextEditor:
             self._clamp_col()
             return 0
 
-        if key == 11:   # Ctrl+K — kill to end
+        if key == 11:   # Ctrl+K - kill to end
             _snapshot()
             self._lines[self.row] = self._lines[self.row][:self.col]
             self._modified = True
             return 0
 
-        if key == 21:   # Ctrl+U — kill to start
+        if key == 21:   # Ctrl+U - kill to start
             _snapshot()
             self._lines[self.row] = self._lines[self.row][self.col:]
             self.col = 0
@@ -331,7 +331,7 @@ class TextEditor:
             self._modified = True
             return 0
 
-        return key   # unhandled — return to caller
+        return key   # unhandled - return to caller
 
     def render(self, win, y: int, x: int, h: int, w: int,
                line_numbers: bool = True) -> None:

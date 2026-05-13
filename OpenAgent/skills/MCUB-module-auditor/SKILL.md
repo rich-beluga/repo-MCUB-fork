@@ -13,8 +13,8 @@ keywords:
   - inline
   - callbacks
   - hikka
-  - аудит
-  - проверка
+  - ayдит
+  - пpoвepкa
 ---
 
 # MCUB Module Auditor

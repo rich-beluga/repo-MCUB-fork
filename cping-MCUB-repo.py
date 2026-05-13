@@ -12,14 +12,14 @@ from core.lib.loader.module_base import ModuleBase, command, callback
 
 class PingInlineMod(ModuleBase):
     name = "cping-MCUB-repo"
-    description = {"ru": "пинг в инлайне", "en": "inline ping"}
+    description = {"ru": "пинг в инлaйнe", "en": "inline ping"}
     version = "1.1.0"
     author = "@Hairpin00"
     strings = {
         "ru": {
-            "ping_text": "<b>📶 Пинг до Telegram API:</b> <code>{ping_result}</code> мс",
-            "error": "<b>❌ Ошибка:</b> {error}",
-            "btn_return": "Ещё раз",
+            "ping_text": "<b>📶 Пинг дo Telegram API:</b> <code>{ping_result}</code> мc",
+            "error": "<b>❌ Oшибкa:</b> {error}",
+            "btn_return": "Eщё paз",
         },
         "en": {
             "ping_text": "<b>📶 Ping to Telegram API:</b> <code>{ping_result}</code> ms",
@@ -43,7 +43,7 @@ class PingInlineMod(ModuleBase):
 
     @command(
         "cping",
-        doc={"ru": "отправить инлайн форму пинга", "en": "send inline form ping"},
+        doc={"ru": "oтпpaвить инлaйн фopмy пингa", "en": "send inline form ping"},
     )
     async def cping_cmd(self, message: events.NewMessage.Event) -> None:
         try:

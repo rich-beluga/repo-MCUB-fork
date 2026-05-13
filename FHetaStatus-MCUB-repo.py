@@ -20,7 +20,7 @@ class FHetaStatusModule(ModuleBase):
     name = "FHetaStatus"
     version = "1.0.4"
     author = "@midga3_modules / port by OpenAgent"
-    description = "Неофициальная проверка доступности FHeta."
+    description = "Heoфициaльнaя пpoвepкa дocтyпнocти FHeta."
 
     check_url = "https://api.fixyres.com/module/Midga3/heroku-modules/radiolistener.py"
 
@@ -38,7 +38,7 @@ class FHetaStatusModule(ModuleBase):
         "fping",
         doc={
             "en": "check FHeta status",
-            "ru": "проверить статус FHeta",
+            "ru": "пpoвepить cтaтyc FHeta",
         },
     )
     async def fping(self, message: Any) -> None:

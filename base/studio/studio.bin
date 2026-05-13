@@ -1,12 +1,12 @@
 """
 Shell command: studio
-Launches the MCUB Studio — interactive TUI module manager.
+Launches the MCUB Studio - interactive TUI module manager.
 """
 
 DESCRIPTION = "Interactive TUI module studio (vim-style)"
 
 HELP = """
-studio — MCUB Module Studio
+studio - MCUB Module Studio
 
 A full-screen TUI for creating, editing, loading,
 reloading, updating and deleting modules.

@@ -26,13 +26,13 @@ from telethon import functions, types
 def register(kernel):
     strings = {
         "ru": {
-            "no_rep": "❗️ Реплай на фото!",
-            "work": "🕔 Обрабатываю...",
-            "done": "✅ Готово! Проверяй профиль.",
-            "err": "❌ Ошибка: {}"
+            "no_rep": "❗ Peплaй нa фoтo!",
+            "work": "🕔 Oбpaбaтывaю...",
+            "done": "✅ Гoтoвo! Пpoвepяй пpoфиль.",
+            "err": "❌ Oшибкa: {}"
         },
         "en": {
-            "no_rep": "❗️ Reply to photo!",
+            "no_rep": "❗ Reply to photo!",
             "work": "🕔 Processing...",
             "done": "✅ Done! Check your profile.",
             "err": "❌ Error: {}"

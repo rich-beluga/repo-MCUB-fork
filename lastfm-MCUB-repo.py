@@ -241,7 +241,7 @@ class LastFmMod(ModuleBase):
     name = "LastFm"
     description = {
         "en": "Module for Last.fm now playing banners",
-        "ru": "Модуль для баннеров текущего трека Last.fm",
+        "ru": "Moдyль для бaннepoв тeкyщeгo тpeкa Last.fm",
     }
     version = "1.2.0"
     author = "@ke_mods"
@@ -256,11 +256,11 @@ class LastFmMod(ModuleBase):
             "no_lyrics": "<emoji document_id=5465665476971471368>❌</emoji> <b>Lyrics not found</b>",
         },
         "ru": {
-            "no_track": "<emoji document_id=5465665476971471368>❌</emoji> <b>Сейчас ничего не играет</b>",
-            "nick_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Укажите ваш никнейм с Last.fm</b>",
-            "uploading": "<emoji document_id=5841359499146825803>🕔</emoji> <i>Загрузка баннера...</i>",
-            "api_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Ошибка Last.fm API:</b> <code>{error}</code>",
-            "no_lyrics": "<emoji document_id=5465665476971471368>❌</emoji> <b>Текст не найден</b>",
+            "no_track": "<emoji document_id=5465665476971471368>❌</emoji> <b>Ceйчac ничeгo нe игpaeт</b>",
+            "nick_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Укaжитe вaш никнeйм c Last.fm</b>",
+            "uploading": "<emoji document_id=5841359499146825803>🕔</emoji> <i>Зaгpyзкa бaннepa...</i>",
+            "api_error": "<emoji document_id=5465665476971471368>❌</emoji> <b>Oшибкa Last.fm API:</b> <code>{error}</code>",
+            "no_lyrics": "<emoji document_id=5465665476971471368>❌</emoji> <b>Тeкcт нe нaйдeн</b>",
         },
     }
 
@@ -273,14 +273,14 @@ class LastFmMod(ModuleBase):
         ),
         ConfigValue(
             "custom_text",
-            "<emoji document_id=5413612466208799435>🤩</emoji> <b>{lastfm_song_name}</b> — <b>{lastfm_song_artist}</b>",
+            "<emoji document_id=5413612466208799435>🤩</emoji> <b>{lastfm_song_name}</b> - <b>{lastfm_song_artist}</b>",
             description=(
                 "Caption template. Available placeholders:\n"
                 "{lastfm_song_name}, {lastfm_song_artist}, {lastfm_song_album}, "
                 "{lastfm_song_url}, {lastfm_cover_url}, {lastfm_username}"
             ),
             validator=Placeholders(
-                default="<emoji document_id=5413612466208799435>🤩</emoji> <b>{lastfm_song_name}</b> — <b>{lastfm_song_artist}</b>",
+                default="<emoji document_id=5413612466208799435>🤩</emoji> <b>{lastfm_song_name}</b> - <b>{lastfm_song_artist}</b>",
                 placeholder_scope="LastFm",
             ),
         ),
@@ -326,13 +326,13 @@ class LastFmMod(ModuleBase):
         ),
         ConfigValue(
             "lyrics_text",
-            "<b>📜 {lastfm_song_artist} — {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
+            "<b>📜 {lastfm_song_artist} - {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
             description="Lyrics output template, supports {lyrics}",
             validator=String(default=""),
         ),
         ConfigValue(
             "rlyrics_text",
-            "<b>🎵 Live lyrics:</b> {lastfm_song_artist} — {lastfm_song_name}\n\n{lyrics}",
+            "<b>🎵 Live lyrics:</b> {lastfm_song_artist} - {lastfm_song_name}\n\n{lyrics}",
             description="Real-time lyrics output template, supports {lyrics}",
             validator=String(default=""),
         ),
@@ -388,7 +388,7 @@ class LastFmMod(ModuleBase):
         await super().on_load()
         defaults = {
             "username": "",
-            "custom_text": "<emoji document_id=5413612466208799435>🤩</emoji> <b>{lastfm_song_name}</b> — <b>{lastfm_song_artist}</b>",
+            "custom_text": "<emoji document_id=5413612466208799435>🤩</emoji> <b>{lastfm_song_name}</b> - <b>{lastfm_song_artist}</b>",
             "font": "https://raw.githubusercontent.com/kamekuro/assets/master/fonts/Onest-Bold.ttf",
             "banner_version": "horizontal",
             "fallback_cover": "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
@@ -405,8 +405,8 @@ class LastFmMod(ModuleBase):
                 "• <b>Registered:</b> <code>{lastfm_registered}</code>\n"
                 "• <b>URL:</b> {lastfm_profile_url}"
             ),
-            "lyrics_text": "<b>📜 {lastfm_song_artist} — {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
-            "rlyrics_text": "<b>🎵 Live lyrics:</b> {lastfm_song_artist} — {lastfm_song_name}\n\n{lyrics}",
+            "lyrics_text": "<b>📜 {lastfm_song_artist} - {lastfm_song_name}</b>\n<blockquote expandable>{lyrics}</blockquote>",
+            "rlyrics_text": "<b>🎵 Live lyrics:</b> {lastfm_song_artist} - {lastfm_song_name}\n\n{lyrics}",
             "rlyrics_current_emoji": "▶️",
             "banner_theme": "default",
             "lrclib_enabled": "true",
@@ -577,7 +577,7 @@ class LastFmMod(ModuleBase):
     def _cancel_buttons(self, cancel_callback: Any | None) -> list[list[Any]] | None:
         if not cancel_callback:
             return None
-        return [[self.Button.inline("⏹️ Отмена", cancel_callback)]]
+        return [[self.Button.inline("⏹️ Oтмeнa", cancel_callback)]]
 
     async def _edit_live_message(self, data: dict[str, Any], text: str) -> None:
         buttons = self._cancel_buttons(data.get("cancel_callback"))
@@ -724,7 +724,7 @@ class LastFmMod(ModuleBase):
         cover_url: str = "",
         username: str = "",
     ) -> str:
-        template = self.config.get("custom_text") or "{lastfm_song_artist} — {lastfm_song_name}"
+        template = self.config.get("custom_text") or "{lastfm_song_artist} - {lastfm_song_name}"
         try:
             return await utils.resolve_placeholders(
                 self.name,
@@ -740,9 +740,9 @@ class LastFmMod(ModuleBase):
                 strict=False,
             )
         except Exception:
-            return f"<b>{self._escape(name)}</b> — <b>{self._escape(artist)}</b>"
+            return f"<b>{self._escape(name)}</b> - <b>{self._escape(artist)}</b>"
 
-    @command("nowplay", alias=["np"], doc_ru="показать текущий трек Last.fm", doc_en="show current Last.fm track")
+    @command("nowplay", alias=["np"], doc_ru="пoкaзaть тeкyщий тpeк Last.fm", doc_en="show current Last.fm track")
     async def nowplay(self, event) -> None:
         username = str(self.config.get("username") or "").strip()
         if not username:
@@ -818,7 +818,7 @@ class LastFmMod(ModuleBase):
                 as_html=True,
             )
 
-    @command("lfmprofile", alias=["lfmp"], doc_ru="профиль Last.fm", doc_en="Last.fm profile")
+    @command("lfmprofile", alias=["lfmp"], doc_ru="пpoфиль Last.fm", doc_en="Last.fm profile")
     async def lfmprofile(self, event) -> None:
         username = utils.get_args_raw(event) or str(self.config.get("username") or "").strip()
         if not username:
@@ -844,7 +844,7 @@ class LastFmMod(ModuleBase):
                 as_html=True,
             )
 
-    @command("lyrics", doc_ru="текст текущего трека", doc_en="lyrics of current track")
+    @command("lyrics", doc_ru="тeкcт тeкyщeгo тpeкa", doc_en="lyrics of current track")
     async def lyrics(self, event) -> None:
         username = str(self.config.get("username") or "").strip()
         if not username:
@@ -898,7 +898,7 @@ class LastFmMod(ModuleBase):
                             await self._edit_live_message(
                                 self._rlyrics_data,
                                 self._rlyrics_data["header"]
-                                + "⏸️ <i>Last.fm больше не показывает текущий трек</i>",
+                                + "⏸️ <i>Last.fm бoльшe нe пoкaзывaeт тeкyщий тpeк</i>",
                             )
                             last_no_track_message_count = pause_count
                         await asyncio.sleep(1)
@@ -931,7 +931,7 @@ class LastFmMod(ModuleBase):
                 await self._edit_live_message(
                     self._rlyrics_data,
                     self._rlyrics_data.get("header", "")
-                    + "✅ <i>Сеанс синхронизации завершен</i>",
+                    + "✅ <i>Ceaнc cинxpoнизaции зaвepшeн</i>",
                 )
             except Exception:
                 pass
@@ -948,18 +948,18 @@ class LastFmMod(ModuleBase):
         self._pending_rlyrics = None
         if self._rlyrics_data.get("active"):
             self._rlyrics_data["active"] = False
-        await call.edit("⏹️ <b>Синхронизация текста отменена</b>", parse_mode="html")
-        await call.answer("Отменено")
+        await call.edit("⏹️ <b>Cинxpoнизaция тeкcтa oтмeнeнa</b>", parse_mode="html")
+        await call.answer("Oтмeнeнo")
 
     @callback(ttl=60)
     async def on_click_rlyrics(self, call: Any, data: Any = None) -> None:
         pending = self._pending_rlyrics
         if not pending:
-            await call.answer("Сессия устарела, запусти команду заново.", alert=True)
+            await call.answer("Ceccия ycтapeлa, зaпycти кoмaндy зaнoвo.", alert=True)
             return
 
         header = pending["header"]
-        initial_text = header + "🎵 <i>Ожидание синхронизации...</i>"
+        initial_text = header + "🎵 <i>Oжидaниe cинxpoнизaции...</i>"
         await call.edit(
             initial_text,
             parse_mode="html",
@@ -987,7 +987,7 @@ class LastFmMod(ModuleBase):
         self._pending_rlyrics = None
         asyncio.create_task(self._rlyrics_loop())
 
-    @command("rlyrics", doc_ru="текст в реальном времени", doc_en="real-time lyrics")
+    @command("rlyrics", doc_ru="тeкcт в peaльнoм вpeмeни", doc_en="real-time lyrics")
     async def rlyrics(self, event) -> None:
         username = str(self.config.get("username") or "").strip()
         if not username:
@@ -1015,23 +1015,23 @@ class LastFmMod(ModuleBase):
                 "lastfm_song_name": self._escape(name),
             }
             header = (
-                "📜 <b>Текст в реальном времени</b>\n"
-                f"<b>{self._escape(artist)} — {self._escape(name)}</b>\n\n"
+                "📜 <b>Тeкcт в peaльнoм вpeмeни</b>\n"
+                f"<b>{self._escape(artist)} - {self._escape(name)}</b>\n\n"
             )
             success, msg = await self.inline(
                 event.chat_id,
-                "🕔 <b>Загружаю текст...</b>",
+                "🕔 <b>Зaгpyжaю тeкcт...</b>",
                 buttons=[
                     [
-                        self.Button.inline("▶️ Запустить", self.on_click_rlyrics),
-                        self.Button.inline("⏹️ Отмена", self.on_click_cancel_rlyrics),
+                        self.Button.inline("▶️ Зaпycтить", self.on_click_rlyrics),
+                        self.Button.inline("⏹️ Oтмeнa", self.on_click_cancel_rlyrics),
                     ]
                 ],
             )
 
             if not success or not msg:
                 sent_message = await event.edit(
-                    header + "🎵 <i>Ожидание синхронизации...</i>",
+                    header + "🎵 <i>Oжидaниe cинxpoнизaции...</i>",
                     parse_mode="html",
                 )
                 self._pending_rlyrics = None
@@ -1069,8 +1069,8 @@ class LastFmMod(ModuleBase):
                 as_html=True,
             )
 
-    @command("stoplyrics", doc_ru="остановить real-time lyrics", doc_en="stop real-time lyrics")
+    @command("stoplyrics", doc_ru="ocтaнoвить real-time lyrics", doc_en="stop real-time lyrics")
     async def stoplyrics(self, event) -> None:
         self._rlyrics_data["active"] = False
         await utils.answer(event, "<b>⏹ Live lyrics stopped</b>", as_html=True)
-# мкуб ратко
+# мкyб paткo

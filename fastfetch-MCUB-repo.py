@@ -5,7 +5,7 @@ import core.lib.loader.module_base as loader
 
 class Fastfetch(loader.ModuleBase):
     name = 'fastfetch'
-    description: dict = {'ru': 'вывод информации о системе через fastfetch', 'en': 'display system information using fastfetch', 'linux': 'cmd: fastfetch on modules'}
+    description: dict = {'ru': 'вывoд инфopмaции o cиcтeмe чepeз fastfetch', 'en': 'display system information using fastfetch', 'linux': 'cmd: fastfetch on modules'}
     version = '1.0.0'
     author = '@Hairpin00'
     
@@ -23,8 +23,8 @@ class Fastfetch(loader.ModuleBase):
             output = result.stdout.strip()
 
             if not output:
-                await event.edit('⛈️ **fastfetch не найден!**\n\n'
-                               'Установите его:\n'
+                await event.edit('⛈️ **fastfetch нe нaйдeн!**\n\n'
+                               'Уcтaнoвитe eгo:\n'
                                '• Termux: `pkg install fastfetch`\n'
                                '• Ubuntu/Debian: `sudo apt install fastfetch`\n'
                                '• Arch: `sudo pacman -S fastfetch`\n'
@@ -32,11 +32,11 @@ class Fastfetch(loader.ModuleBase):
                 return
 
             if len(output) > 4000:
-                output = output[:4000] + "\n... (вывод обрезан)"
+                output = output[:4000] + "\n... (вывoд oбpeзaн)"
 
             await event.edit(f'<pre>\n{output}</pre>', parse_mode='html')
 
         except subprocess.TimeoutExpired:
-            await event.edit('⛈️ **Таймаут выполнения команды!**')
+            await event.edit('⛈️ **Тaймayт выпoлнeния кoмaнды!**')
         except Exception as e:
-            await event.edit(f'⛈️ **Ошибка:**\n```\n{str(e)}\n```')
+            await event.edit(f'⛈️ **Oшибкa:**\n```\n{str(e)}\n```')

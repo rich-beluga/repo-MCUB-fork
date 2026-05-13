@@ -1,5 +1,5 @@
 """
-StudioActions — synchronous bridge between the curses TUI thread
+StudioActions - synchronous bridge between the curses TUI thread
 and the async kernel event loop.
 
 All public methods block until the coroutine finishes (or times out).
@@ -31,7 +31,7 @@ class ProgressReporter:
         self._cbs:    List[Callable] = []
 
     def step(self, pct: float, msg: str) -> None:
-        """Advance to *pct* (0.0–1.0) and append *msg* to the log."""
+        """Advance to *pct* (0.0-1.0) and append *msg* to the log."""
         self.percent = max(self.percent, min(1.0, float(pct)))
         ts    = datetime.now().strftime("%H:%M:%S")
         entry = f"[{ts}] {msg}"
@@ -103,7 +103,7 @@ class StudioActions:
             return {}
 
     def get_all_repo_modules(self) -> List[Tuple[str, str]]:
-        """Return [(module_name, repo_url)] from all repos (slow — network)."""
+        """Return [(module_name, repo_url)] from all repos (slow - network)."""
         repos   = [self.k.default_repo] + list(self.k.repositories)
         results = []
         for repo in repos:
@@ -338,7 +338,7 @@ class StudioActions:
                 self.k.download_module_from_repo(repo_url, module_name)
             )
             if not source:
-                reporter.step(1.0, "=X Download returned empty — module not found")
+                reporter.step(1.0, "=X Download returned empty - module not found")
                 return False, "Module not found in repository"
 
             reporter.step(0.30, f"=> Downloaded {len(source)} bytes")

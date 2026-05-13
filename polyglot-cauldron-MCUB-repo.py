@@ -27,20 +27,20 @@ def register(kernel):
 
     strings = {
         'ru': {
-            'no_code': 'Передай код аргументом или ответь на сообщение с кодом.',
-            'running': 'Выполняю...',
+            'no_code': 'Пepeдaй кoд apгyмeнтoм или oтвeть нa cooбщeниe c кoдoм.',
+            'running': 'Выпoлняю...',
             'success': 'OK',
-            'error': 'Ошибка',
-            'no_output': '(нет вывода)',
-            'mode_usage': 'Использование: <code>{p}polybrew mode &lt;{modes}&gt;</code>',
-            'mode_set': 'Режим изменён на: <code>{mode}</code>',
-            'bad_lang': 'Неизвестный язык. Доступно: <code>{modes}</code>',
+            'error': 'Oшибкa',
+            'no_output': '(нeт вывoдa)',
+            'mode_usage': 'Иcпoльзoвaниe: <code>{p}polybrew mode &lt;{modes}&gt;</code>',
+            'mode_set': 'Peжим измeнён нa: <code>{mode}</code>',
+            'bad_lang': 'Heизвecтный язык. Дocтyпнo: <code>{modes}</code>',
             'help': (
                 '<b>Polyglot Cauldron</b>\n'
-                '<code>{p}polybrew &lt;код&gt;</code> — выполнить код в текущем режиме\n'
-                'Ответь на сообщение с кодом командой <code>{p}polybrew</code>\n'
-                '<code>{p}polybrew mode &lt;язык&gt;</code> — переключить режим\n'
-                '<code>{p}polybrew run &lt;язык&gt; &lt;код&gt;</code> — разовый запуск\n'
+                '<code>{p}polybrew &lt;кoд&gt;</code> - выпoлнить кoд в тeкyщeм peжимe\n'
+                'Oтвeть нa cooбщeниe c кoдoм кoмaндoй <code>{p}polybrew</code>\n'
+                '<code>{p}polybrew mode &lt;язык&gt;</code> - пepeключить peжим\n'
+                '<code>{p}polybrew run &lt;язык&gt; &lt;кoд&gt;</code> - paзoвый зaпycк\n'
                 'Языки: <code>{modes}</code>'
             ),
         },
@@ -55,10 +55,10 @@ def register(kernel):
             'bad_lang': 'Unknown language. Available: <code>{modes}</code>',
             'help': (
                 '<b>Polyglot Cauldron</b>\n'
-                '<code>{p}polybrew &lt;code&gt;</code> — run code in current mode\n'
+                '<code>{p}polybrew &lt;code&gt;</code> - run code in current mode\n'
                 'Reply to a message containing code with <code>{p}polybrew</code>\n'
-                '<code>{p}polybrew mode &lt;lang&gt;</code> — switch mode\n'
-                '<code>{p}polybrew run &lt;lang&gt; &lt;code&gt;</code> — one-off run\n'
+                '<code>{p}polybrew mode &lt;lang&gt;</code> - switch mode\n'
+                '<code>{p}polybrew run &lt;lang&gt; &lt;code&gt;</code> - one-off run\n'
                 'Languages: <code>{modes}</code>'
             ),
         },
@@ -111,7 +111,7 @@ def register(kernel):
         status = s['success'] if returncode == 0 else s['error']
         out = (stdout or stderr or s['no_output']).strip()
         return (
-            f'<b>{label}</b> — <b>{escape_html(status)}</b>\n'
+            f'<b>{label}</b> - <b>{escape_html(status)}</b>\n'
             f'<pre language="{lang_id}">{escape_html(code[:300])}</pre>\n'
             f'<pre>{escape_html(out[:2000])}</pre>'
         )
