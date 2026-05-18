@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import quote
 
 
 class WebPlugin:
@@ -32,7 +34,29 @@ class WebPlugin:
     def __init__(self, agent: Any) -> None:
         self.agent = agent
 
+    def _looks_like_url(self, value: str) -> bool:
+        value = value.strip()
+        if value.startswith(("http://", "https://")):
+            return True
+        import re as _re
+        return bool(_re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?:\/[^\s]*)?$", value))
+
+    def _html_to_text(self, value: str) -> str:
+        value = re.sub(r"<script\\b[^>]*>.*?</script>", " ", value, flags=re.I | re.S)
+        value = re.sub(r"<style\\b[^>]*>.*?</style>", " ", value, flags=re.I | re.S)
+        value = re.sub(r"<[^>]+>", " ", value)
+        value = re.sub(r"\\s+", " ", value)
+        value = re.sub(r"&amp;", "&", value)
+        value = re.sub(r"&lt;", "<", value)
+        value = re.sub(r"&gt;", ">", value)
+        value = re.sub(r"&quot;", '"', value)
+        value = re.sub(r"&#x27;", "'", value)
+        value = re.sub(r"&#x2F;", "/", value)
+        value = re.sub(r"&nbsp;", " ", value)
+        return value.strip()[:12000]
+    
     async def cmd_web(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        import aiohttp
         attrs = self.agent._parse_xml_attrs(attrs_raw)
         query = (
             body.strip()
@@ -44,4 +68,49 @@ class WebPlugin:
         )
         if not query:
             return "query or url is required"
-        return await self.agent._web_search(query)
+        
+        query = query.strip()
+        if self._looks_like_url(query):
+            url = query if query.startswith(("http://", "https://")) else "https://" + query
+            headers = {"User-Agent": "Mozilla/5.0"}
+            timeout = aiohttp.ClientTimeout(total=int(self.agent.config["timeout"]))
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    text = await resp.text(errors="replace")
+                    if resp.status >= 400:
+                        raise RuntimeError(f"Fetch HTTP {resp.status}: {text[:500]}")
+                    content_type = resp.headers.get("Content-Type", "")
+            if "html" in content_type.lower():
+                return f"Fetched URL: {url}\n\n" + self._html_to_text(text)
+            return f"Fetched URL: {url}\nContent-Type: {content_type}\n\n{text[:12000]}"
+        
+        url = f"https://duckduckgo.com/html/?q={quote(query)}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        timeout = aiohttp.ClientTimeout(total=int(self.agent.config["timeout"]))
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url) as resp:
+                text = await resp.text()
+                if resp.status >= 400:
+                    raise RuntimeError(f"Search HTTP {resp.status}: {text[:500]}")
+        
+        results = []
+        blocks = re.findall(
+            r'<a[^>]+class="result__a"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>',
+            text,
+            flags=re.DOTALL | re.I,
+        )
+        if not blocks:
+            blocks = re.findall(
+                r'<a[^>]+class="result__a"[^>]*>(.*?)</a>',
+                text,
+                flags=re.DOTALL | re.I,
+            )
+            blocks = [(title, "") for title in blocks]
+        
+        result_lines = []
+        for title, snippet in blocks[:5]:
+            title_text = html.unescape(re.sub(r"<[^>]+>", "", title)).strip()
+            snippet_text = html.unescape(re.sub(r"<[^>]+>", "", snippet)).strip()
+            if title_text:
+                result_lines.append(f"- {title_text}: {snippet_text}".strip())
+        return "\n".join(result_lines) or "No search results found"

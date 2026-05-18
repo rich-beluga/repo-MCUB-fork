@@ -21,6 +21,8 @@ import tempfile
 import time
 import uuid
 import json
+import importlib
+import importlib.util
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -70,6 +72,25 @@ from core.lib.loader.module_config import (
     String,
 )
 
+
+class OpenAgentPlugin:
+    """Base class for OpenAgent plugins."""
+    name: str = ""
+    version: str = "0.1.0"
+    tool_registry: tuple[str, ...] = ()
+    tool_map: dict[str, str] = {}
+    config_defaults: dict[str, object] = {}
+    
+    def __init__(self, agent: "OpenAgent") -> None:
+        self._agent = agent
+    
+    @property
+    def agent(self) -> "OpenAgent":
+        return self._agent
+    
+    async def on_load(self) -> None:
+        """Called after plugin is registered."""
+        pass
 
 class OpenAgent(ModuleBase):
     name = "OpenAgent"
@@ -187,29 +208,12 @@ class OpenAgent(ModuleBase):
     TOOL_CALL_RE = re.compile(r"<([a-z0-9._]+)([^>]*)>(.*?)</\1>|<([a-z0-9._]+)([^>]*)/?>", re.DOTALL | re.I)
     TOOL_CALL_JSON_RE = re.compile(r"```tool_call\s*(.*?)```", re.DOTALL | re.I)
     TOOL_REGISTRY = (
-        "terminal.run", "terminal.inspect", "terminal.list_files", "terminal.read_file", "terminal.git_status",
-        "web.search", "web.fetch_url", "web.read_html", "web.extract_links", "web.summarize_page",
-        "mcub.command", "mcub.config", "mcub.modules", "mcub.install", "mcub.reload",
-        "message.send_current", "message.send_target", "message.reply", "message.edit", "message.forward",
-        "message.delete", "message.pin", "message.react", "message.get", "message.search",
-        "message.history", "message.mark_read", "message.typing", "message.schedule", "message.draft",
-        "file.send", "file.download_media", "file.read_text", "file.attach_image", "file.attach_video",
-        "dialog.list_private", "dialog.list_groups", "dialog.list_all", "dialog.search", "dialog.archive",
-        "dialog.unarchive", "dialog.leave", "dialog.export_invite", "dialog.get_photo", "dialog.set_photo",
-        "chat.info", "chat.participants", "chat.admins", "chat.permissions", "chat.common_with_user",
-        "chat.set_title", "chat.set_about", "chat.set_username", "chat.slowmode", "chat.invite_link",
-        "moderation.mute", "moderation.unmute", "moderation.ban", "moderation.unban", "moderation.kick",
-        "moderation.promote", "moderation.demote", "moderation.pin", "moderation.delete_messages", "moderation.get_admins",
-        "profile.get", "profile.get_full", "profile.get_me", "profile.update_name", "profile.update_bio",
-        "profile.update_username", "profile.set_photo", "profile.download_photo", "profile.get_photos", "profile.common_chats",
-        "contacts.add", "contacts.delete", "contacts.block", "contacts.unblock", "contacts.entity",
-        "creation.channel", "creation.group", "creation.bot", "creation.channel_avatar", "creation.private_invite",
+        # Core/module-tied tools. Most tools should come from plugins.
+        "thinking.note",
         "skills.list", "skills.read", "skills.activate", "skills.import_md", "skills.export_md", "skills.save_from_ai", "skills.install", "skills.repo_list",
         "code.generate_file", "code.generate_mcub_module", "code.choose_filename", "code.attach_result", "code.read_docs",
         "context.remember", "context.clear", "context.regenerate", "context.reply_context", "context.media_context",
-        "thinking.note",
         "todo.add", "todo.delete", "todo.edit", "todo.current", "todo.close", "todo.closeall", "todo.clear",
-        "account.blacklist", "account.saved_messages", "account.effects", "account.reactions", "account.available_reactions",
         "utility.token_usage", "utility.placeholders", "utility.random_template", "utility.agent_log", "utility.error_file",
     )
     AGENT_MAX_STEPS = 15
@@ -684,7 +688,11 @@ class OpenAgent(ModuleBase):
             "total_tokens": 0,
         }
         self._todo_items_cache: list[dict[str, str]] = []
+        self._plugins: dict[str, OpenAgentPlugin] = {}
+        self._plugin_files: dict[str, Path] = {}
+        self._plugins_cache: list[dict] = []
         await self._load_todo_items_storage()
+        await self._load_installed_plugins()
         self.log.info("OpenAgent loaded")
 
     def _provider(self) -> str:
@@ -758,7 +766,7 @@ class OpenAgent(ModuleBase):
             "model": self._model(),
             "reasoning_effort": self._reasoning_effort(),
             "tool_count": str(tool_count if tool_count is not None else 0),
-            "available_tool_count": str(len(self.TOOL_REGISTRY)),
+            "available_tool_count": str(len(self._effective_tool_registry())),
             "elapsed": f"{elapsed:.1f}" if elapsed is not None else "0.0",
             "input_tokens": str(self._last_token_usage.get("input_tokens", 0)),
             "output_tokens": str(self._last_token_usage.get("output_tokens", 0)),
@@ -1192,7 +1200,7 @@ class OpenAgent(ModuleBase):
 
     def _tool_registry_prompt(self) -> str:
         lines = []
-        for index, name in enumerate(self.TOOL_REGISTRY, 1):
+        for index, name in enumerate(self._effective_tool_registry(), 1):
             lines.append(f"{index}. {name}")
         return "\n".join(lines)
 
@@ -1396,6 +1404,242 @@ class OpenAgent(ModuleBase):
             if path.exists() and path.is_dir():
                 return str(path)
         return str(Path.cwd())
+
+    def _resolve_plugins_dir(self) -> Path:
+        """Directory for installed plugins on the real machine."""
+        path = Path(self._workspace_dir()) / "openagent_plugins"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _builtin_plugins_dir(self) -> Path:
+        """Directory with bundled plugins shipped with OpenAgent."""
+        return Path(__file__).resolve().parent / "OpenAgent" / "plugins"
+
+    def _plugin_scan_dirs(self) -> list[Path]:
+        dirs: list[Path] = []
+        for candidate in (self._builtin_plugins_dir(), self._resolve_plugins_dir()):
+            if candidate.exists() and candidate.is_dir() and candidate not in dirs:
+                dirs.append(candidate)
+        return dirs
+
+    async def _load_installed_plugins(self) -> None:
+        """Scan bundled + external plugin directories and register all plugins.
+        External plugins override bundled ones without warning."""
+        for plugins_dir in self._plugin_scan_dirs():
+            for fpath in sorted(plugins_dir.glob("*.py")):
+                if fpath.name.startswith("_") or fpath.name == "__init__.py":
+                    continue
+                try:
+                    await self._register_plugin_from_file(fpath)
+                except Exception as exc:
+                    self.log.warning(f"Plugin load failed: {fpath.name} - {exc}")
+
+    async def _register_plugin_from_file(self, fpath: Path) -> None:
+        """Import a .py file, find *Plugin class, register it."""
+        module_name = f"openagent_plugins_{fpath.parent.name}_{fpath.stem}_{uuid.uuid4().hex[:8]}"
+        spec = importlib.util.spec_from_file_location(module_name, fpath)
+        if not spec or not spec.loader:
+            raise ImportError(f"Cannot load {fpath}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        plugin_cls = None
+        for attr_name in dir(mod):
+            attr = getattr(mod, attr_name)
+            if isinstance(attr, type) and attr_name.endswith("Plugin") and attr is not OpenAgentPlugin:
+                plugin_cls = attr
+                break
+        if not plugin_cls:
+            raise ValueError(f"No *Plugin class found in {fpath.name}")
+        plugin = plugin_cls(self)
+        self._register_plugin(plugin)
+        self._plugin_files[str(plugin.name).lower()] = fpath
+        on_load = getattr(plugin, "on_load", None)
+        if callable(on_load):
+            maybe_awaitable = on_load()
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
+
+    def _register_plugin(self, plugin: OpenAgentPlugin) -> None:
+        """Register plugin: add config_defaults, tools, handlers."""
+        name = str(getattr(plugin, "name", "") or "").strip().lower()
+        if not name:
+            name = plugin.__class__.__name__.replace("Plugin", "").strip().lower()
+        plugin.name = name
+        if name in self._plugins:
+            self.log.debug(f"Plugin {name} already registered, external overrides bundled")
+        # Set default config values if not already set
+        for key, value in getattr(plugin, "config_defaults", {}).items():
+            if key not in self.config.keys():
+                self.config._values[key] = self._plugin_config_value(key, value)
+        self._plugins[name] = plugin
+        self.log.info(f"Plugin registered: {name} v{plugin.version}")
+
+    def _plugin_config_value(self, key: str, value: object) -> ConfigValue:
+        description = f"OpenAgent plugin setting: {key}"
+        if isinstance(value, bool):
+            validator = Boolean(default=value)
+        elif isinstance(value, int):
+            validator = Integer(default=value)
+        elif isinstance(value, float):
+            validator = Float(default=value)
+        elif isinstance(value, list):
+            validator = List(default=value)
+        else:
+            validator = String(default=str(value or ""))
+        return ConfigValue(key, value, description=description, validator=validator)
+
+    def _effective_tool_registry(self) -> tuple[str, ...]:
+        names = set(self.TOOL_REGISTRY)
+        for plugin in self._plugins.values():
+            for tool_name in getattr(plugin, "tool_registry", ()):
+                if tool_name:
+                    names.add(str(tool_name).strip().lower())
+            for tool_name in getattr(plugin, "tool_map", {}).keys():
+                if tool_name:
+                    names.add(str(tool_name).strip().lower())
+        return tuple(sorted(names))
+
+    def _unregister_plugin(self, name: str) -> None:
+        """Remove a plugin by name."""
+        name = str(name or "").strip().lower()
+        self._plugins.pop(name, None)
+        self._plugin_files.pop(name, None)
+        self.log.info(f"Plugin unregistered: {name}")
+
+    def _get_plugin_for_tool(self, tool_name: str) -> OpenAgentPlugin | None:
+        """Find which plugin handles a given tool name."""
+        tool_name = (tool_name or "").lower().strip()
+        for candidate in self._plugins.values():
+            if tool_name in getattr(candidate, "tool_map", {}):
+                return candidate
+        group = self._tool_group(tool_name)
+        plugin = self._plugins.get(group)
+        if plugin is not None:
+            return plugin
+        return None
+
+    async def _fetch_repo_plugins(self) -> list[dict]:
+        """Fetch list of available plugins from GitHub repo."""
+        url = "https://api.github.com/repos/hairpin01/repo-MCUB-fork/contents/OpenAgent/plugins"
+        try:
+            session = aiohttp.ClientSession()
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    return []
+                files = await resp.json()
+        except Exception:
+            return []
+        finally:
+            await session.close()
+
+        plugins = []
+        for f in files:
+            fname = f.get("name", "")
+            if not fname.endswith(".py") or fname == "__init__.py":
+                continue
+            raw_url = f.get("download_url", "")
+            meta = await self._parse_plugin_meta(raw_url)
+            meta["file_name"] = fname
+            meta["plugin_name"] = fname.replace(".py", "")
+            meta["download_url"] = raw_url
+            plugins.append(meta)
+        self._plugins_cache = plugins
+        return plugins
+
+    async def _parse_plugin_meta(self, raw_url: str) -> dict:
+        """Parse plugin metadata from raw .py file via regex."""
+        meta: dict = {"name": "?", "version": "?", "author": "?", "description": "?", "tools": []}
+        try:
+            session = aiohttp.ClientSession()
+            async with session.get(raw_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return meta
+                code = await resp.text()
+        except Exception:
+            return meta
+        finally:
+            await session.close()
+
+        name_m = re.search(r'name\s*=\s*["](.+?)["]', code) or re.search(r"name\s*=\s*['](.+?)[']", code)
+        ver_m = re.search(r'version\s*=\s*["](.+?)["]', code) or re.search(r"version\s*=\s*['](.+?)[']", code)
+        author_m = re.search(r'author\s*=\s*["](.+?)["]', code) or re.search(r"author\s*=\s*['](.+?)[']", code)
+        desc_m = re.search(r'"ru"\s*:\s*"(.+?)"', code)
+        if not desc_m:
+            desc_m = re.search(r'"en"\s*:\s*"(.+?)"', code)
+        tools_m = re.findall(r'"((?:terminal|web|mcub|message|file|dialog|chat|moderation|profile|contacts|creation|account|code|utility|skills|context|todo|thinking)\.[\w.]+)"', code)
+
+        if name_m: meta["name"] = name_m.group(1)
+        if ver_m: meta["version"] = ver_m.group(1)
+        if author_m: meta["author"] = author_m.group(1)
+        if desc_m: meta["description"] = desc_m.group(1)
+        if tools_m: meta["tools"] = tools_m
+        return meta
+
+    async def _install_plugin_from_repo(self, name: str) -> str:
+        """Download a plugin from repo and install it."""
+        raw_url = f"https://raw.githubusercontent.com/hairpin01/repo-MCUB-fork/main/OpenAgent/plugins/{name}.py"
+        session = aiohttp.ClientSession()
+        try:
+            async with session.get(raw_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"Plugin {name} not found in repo")
+                code = await resp.text()
+        finally:
+            await session.close()
+        
+        plugins_dir = self._resolve_plugins_dir()
+        fpath = plugins_dir / f"{name}_plugin.py"
+        fpath.write_text(code, encoding="utf-8")
+        await self._register_plugin_from_file(fpath)
+        return name
+
+    def _safe_plugin_name(self, name: str) -> str:
+        name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(name or "").strip()).strip("._")
+        if name.endswith("_plugin"):
+            name = name[:-7]
+        return (name[:64] or "plugin").lower()
+
+    async def _install_plugin_from_code(self, name: str, code: str) -> str:
+        """Install a plugin from raw Python code into openagent_plugins/."""
+        code = (code or "").strip()
+        if not code:
+            raise ValueError("Plugin code is empty")
+        compile(code, f"<openagent-plugin:{name or 'reply'}>", "exec")
+        safe_name = self._safe_plugin_name(name)
+        fpath = self._resolve_plugins_dir() / f"{safe_name}.py"
+        fpath.write_text(code + "\n", encoding="utf-8")
+        try:
+            await self._register_plugin_from_file(fpath)
+        except Exception:
+            with contextlib.suppress(Exception):
+                fpath.unlink()
+            raise
+        return next((pname for pname, path in self._plugin_files.items() if path == fpath), safe_name)
+
+    async def _install_plugin_from_reply(self, event: events.NewMessage.Event) -> str:
+        reply = await event.get_reply_message()
+        if not reply:
+            raise ValueError("Reply to a .py plugin file or Python plugin code")
+        arg_name = self._args_raw(event)
+        file_name = getattr(getattr(reply, "file", None), "name", None) or ""
+        code = ""
+        try:
+            data = await reply.download_media(file=bytes)
+            if data:
+                code = data.decode("utf-8", errors="replace")
+        except Exception:
+            code = ""
+        if not code:
+            code = getattr(reply, "raw_text", None) or getattr(reply, "text", "") or ""
+        if not code.strip():
+            raise ValueError("Plugin code is empty")
+        name = arg_name.strip()
+        if not name and file_name.lower().endswith(".py"):
+            name = Path(file_name).stem
+        if not name:
+            class_match = re.search(r"class\s+(\w+Plugin)\b", code)
+            name = class_match.group(1).replace("Plugin", "") if class_match else "plugin"
+        return await self._install_plugin_from_code(name, code)
 
     def _repo_context_prompt(self) -> str:
         if not bool(self.config.get("repo_context_enabled", True)):
@@ -1785,7 +2029,7 @@ class OpenAgent(ModuleBase):
         tlist = ", ".join(sorted(self._get_tool_map().keys()))
         todo_snapshot = self._format_todo_placeholder()
         prompt += (
-            f"\n\nOpenAgent 0.5.0 refreshed architecture is active. You have access to {len(self.TOOL_REGISTRY)} tool operations.\n"
+            f"\n\nOpenAgent 0.5.0 refreshed architecture is active. You have access to {len(self._effective_tool_registry())} tool operations.\n"
             "To use tools, output one or more fenced JSON blocks in the same turn and nothing else. Batch independent tools to reduce latency:\n"
             "```tool_call\n"
             "{\"tool\":\"tool.name\",\"args\":{\"key\":\"value\"},\"body\":\"optional long text\"}\n"
@@ -1839,79 +2083,6 @@ class OpenAgent(ModuleBase):
             result += f"stderr:\n{err}\n"
         return result[-6000:]
 
-    def _looks_like_url(self, value: str) -> bool:
-        value = value.strip()
-        if value.startswith(("http://", "https://")):
-            return True
-        parsed = urlparse("https://" + value)
-        return "." in parsed.netloc and " " not in parsed.netloc
-
-    def _html_to_text(self, value: str) -> str:
-        value = re.sub(r"<script\b[^>]*>.*?</script>", " ", value, flags=re.I | re.S)
-        value = re.sub(r"<style\b[^>]*>.*?</style>", " ", value, flags=re.I | re.S)
-        title_match = re.search(r"<title[^>]*>(.*?)</title>", value, flags=re.I | re.S)
-        title = html.unescape(re.sub(r"<[^>]+>", " ", title_match.group(1))).strip() if title_match else ""
-        links = []
-        for href, text in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', value, flags=re.I | re.S)[:40]:
-            text_clean = html.unescape(re.sub(r"<[^>]+>", " ", text)).strip()
-            if text_clean and href:
-                links.append(f"- {text_clean}: {href}")
-        body = html.unescape(re.sub(r"<[^>]+>", " ", value))
-        body = re.sub(r"\s+", " ", body).strip()
-        parts = []
-        if title:
-            parts.append(f"Title: {title}")
-        if body:
-            parts.append("Content:\n" + body[:12000])
-        if links:
-            parts.append("Links:\n" + "\n".join(links))
-        return "\n\n".join(parts) or "No readable content"
-
-    async def _web_search(self, query: str) -> str:
-        query = query.strip()
-        if self._looks_like_url(query):
-            url = query if query.startswith(("http://", "https://")) else "https://" + query
-            headers = {"User-Agent": "Mozilla/5.0"}
-            timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get(url, allow_redirects=True) as resp:
-                    text = await resp.text(errors="replace")
-                    if resp.status >= 400:
-                        raise RuntimeError(f"Fetch HTTP {resp.status}: {text[:500]}")
-                    content_type = resp.headers.get("Content-Type", "")
-            if "html" in content_type.lower():
-                return f"Fetched URL: {url}\n\n" + self._html_to_text(text)
-            return f"Fetched URL: {url}\nContent-Type: {content_type}\n\n{text[:12000]}"
-
-        url = f"https://duckduckgo.com/html/?q={quote(query)}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            async with session.get(url) as resp:
-                text = await resp.text()
-                if resp.status >= 400:
-                    raise RuntimeError(f"Search HTTP {resp.status}: {text[:500]}")
-
-        results = []
-        blocks = re.findall(
-            r'<a[^>]+class="result__a"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>',
-            text,
-            flags=re.DOTALL | re.I,
-        )
-        if not blocks:
-            blocks = re.findall(
-                r'<a[^>]+class="result__a"[^>]*>(.*?)</a>',
-                text,
-                flags=re.DOTALL | re.I,
-            )
-            blocks = [(title, "") for title in blocks]
-
-        for title, snippet in blocks[:5]:
-            title_text = html.unescape(re.sub(r"<[^>]+>", "", title)).strip()
-            snippet_text = html.unescape(re.sub(r"<[^>]+>", "", snippet)).strip()
-            if title_text:
-                results.append(f"- {title_text}: {snippet_text}".strip())
-        return "\n".join(results) or "No search results found"
 
     async def _fetch_mcub_docs(self) -> str:
         timeout = aiohttp.ClientTimeout(total=int(self.config["timeout"]))
@@ -2300,134 +2471,6 @@ class OpenAgent(ModuleBase):
         def output(self) -> str:
             return "\n\n".join(self._outputs).strip()
 
-    async def _run_mcub_command(self, command: str, source_event: Any) -> str:
-        command = command.strip()
-        if not command:
-            return "Empty MCUB command"
-        prefix = getattr(self.kernel, "custom_prefix", ".") or "."
-        if not command.startswith(prefix):
-            command = prefix + command
-
-        cmd_name = command[len(prefix) :].split(maxsplit=1)[0].lower()
-        if cmd_name in {"oa", "agent"}:
-            return "Blocked recursive OpenAgent command"
-
-        event = self._MCUBEvent(self, source_event, command)
-        try:
-            handled = await self.kernel.process_command(event)
-        except Exception as exc:
-            await self.kernel.handle_error(exc, source="OpenAgent:mcub", event=source_event)
-            return f"MCUB command failed: {exc}"
-        output = event.output or f"Command handled: {handled}"
-        return output[-6000:]
-
-    async def _dialogs_tool(self, mode: str) -> str:
-        await asyncio.sleep(0)
-        mode = (mode or "private").strip().lower()
-        lines = []
-        try:
-            async for dialog in self.client.iter_dialogs(limit=80):
-                entity = dialog.entity
-                is_user = bool(getattr(entity, "first_name", None) or getattr(entity, "last_name", None))
-                is_bot = bool(getattr(entity, "bot", False))
-                is_group = bool(getattr(entity, "megagroup", False) or getattr(entity, "broadcast", False))
-                if mode in {"private", "pm", "dm", "лс"} and (not is_user or is_bot):
-                    continue
-                if mode in {"groups", "group", "chats", "группы"} and not is_group:
-                    continue
-                username = f"@{entity.username}" if getattr(entity, "username", None) else ""
-                name = getattr(dialog, "name", None) or " ".join(
-                    p
-                    for p in (
-                        getattr(entity, "first_name", None),
-                        getattr(entity, "last_name", None),
-                    )
-                    if p
-                ) or getattr(entity, "title", None) or "Unknown"
-                unread = getattr(dialog, "unread_count", 0)
-                lines.append(
-                    f"{name} {username} [id={getattr(entity, 'id', None)}] unread={unread}".strip()
-                )
-                if len(lines) >= 40:
-                    break
-        except Exception as exc:
-            return f"Could not list dialogs: {exc}"
-        return "\n".join(lines) or "No dialogs found"
-
-    async def _chat_tool(self, query: str, source_event: Any) -> str:
-        query = (query or "info").strip().lower()
-        chat_id = getattr(source_event, "chat_id", None)
-        if not chat_id:
-            return "No chat context available"
-
-        if query in {"participants", "members", "users"}:
-            lines = []
-            try:
-                async for user in self.client.iter_participants(chat_id, limit=30):
-                    username = f"@{user.username}" if getattr(user, "username", None) else ""
-                    name = " ".join(
-                        p for p in (getattr(user, "first_name", None), getattr(user, "last_name", None)) if p
-                    ) or "Unknown"
-                    lines.append(f"{name} {username} [{user.id}]".strip())
-            except Exception as exc:
-                return f"Could not list participants: {exc}"
-            return "\n".join(lines) or "No participants found"
-
-        try:
-            chat = await source_event.get_chat()
-        except Exception:
-            chat = await self.client.get_entity(chat_id)
-        title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "Unknown"
-        username = f"@{chat.username}" if getattr(chat, "username", None) else ""
-        return (
-            f"Chat title: {title}\n"
-            f"Username: {username}\n"
-            f"ID: {getattr(chat, 'id', chat_id)}\n"
-            f"Megagroup: {getattr(chat, 'megagroup', None)}\n"
-            f"Broadcast: {getattr(chat, 'broadcast', None)}"
-        )
-
-    async def _profile_tool(self, target: str, source_event: Any) -> str:
-        target = (target or "").strip()
-        try:
-            if not target or target.lower() in {"reply", "replied"}:
-                reply = await source_event.get_reply_message()
-                entity = await reply.get_sender() if reply else await source_event.get_sender()
-            else:
-                try:
-                    entity = await self.client.get_entity(int(target))
-                except ValueError:
-                    entity = await self.client.get_entity(target)
-        except Exception as exc:
-            return f"Could not resolve profile: {exc}"
-
-        return await self._format_full_profile(entity)
-
-    async def _send_userbot_message(
-        self,
-        text: str,
-        source_event: Any,
-        chat: str | None = None,
-    ) -> str:
-        text = (text or "").strip()
-        if not text:
-            return "Message text is empty"
-        if chat:
-            chat = chat.strip()
-            try:
-                entity: Any = int(chat)
-            except ValueError:
-                entity = chat
-        else:
-            entity = getattr(source_event, "chat_id", None)
-        if entity is None:
-            return "No target chat available"
-        try:
-            sent = await self.client.send_message(entity, text)
-        except Exception as exc:
-            return f"Could not send message: {exc}"
-        target = chat or str(getattr(source_event, "chat_id", entity))
-        return f"Message sent to {target}, id={getattr(sent, 'id', None)}"
 
     def _parse_xml_attrs(self, attrs: str) -> dict[str, str]:
         parsed: dict[str, str] = {}
@@ -2476,104 +2519,6 @@ class OpenAgent(ModuleBase):
         await self.client(EditPhotoRequest(channel=channel, photo=uploaded))
         return "avatar set"
 
-    async def _create_channel_or_group(
-        self,
-        kind: str,
-        attrs_raw: str,
-        body: str,
-        source_event: Any | None,
-    ) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        title = attrs.get("title") or (body.strip().splitlines()[0] if body.strip() else "OpenAgent Chat")
-        about = attrs.get("about") or attrs.get("description") or "\n".join(body.strip().splitlines()[1:]).strip()
-        username = (attrs.get("username") or attrs.get("public") or "").lstrip("@")
-        invite_title = attrs.get("invite_title") or attrs.get("invite") or "OpenAgent invite"
-        is_group = kind == "group"
-
-        result = await self.client(
-            CreateChannelRequest(
-                title=title[:128],
-                about=about[:255] if about else "",
-                megagroup=is_group,
-                broadcast=not is_group,
-            )
-        )
-        channel = result.chats[0]
-        channel_id = getattr(channel, "id", None)
-        lines = [f"Created {kind}: {title} [id={channel_id}]"]
-
-        if about:
-            try:
-                await self.client(EditChatAboutRequest(peer=channel, about=about[:255]))
-                lines.append("description set")
-            except Exception as exc:
-                lines.append(f"description failed: {exc}")
-
-        if username:
-            try:
-                await self.client(UpdateUsernameRequest(channel=channel, username=username))
-                lines.append(f"public link: https://t.me/{username}")
-            except Exception as exc:
-                lines.append(f"public username failed: {exc}")
-
-        try:
-            avatar_result = await self._set_channel_avatar(channel, attrs, source_event)
-            if avatar_result:
-                lines.append(avatar_result)
-        except Exception as exc:
-            lines.append(f"avatar failed: {exc}")
-
-        if not username or attrs.get("private_link", "").lower() in {"1", "true", "yes"} or invite_title:
-            try:
-                invite = await self.client(
-                    ExportChatInviteRequest(peer=channel, title=invite_title[:32])
-                )
-                link = getattr(invite, "link", None)
-                if link:
-                    lines.append(f"private invite: {link}")
-            except Exception as exc:
-                lines.append(f"private invite failed: {exc}")
-        return "\n".join(lines)
-
-    async def _create_bot_via_botfather(self, attrs_raw: str, body: str) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        name = attrs.get("name") or attrs.get("title") or (body.strip().splitlines()[0] if body.strip() else "OpenAgent Bot")
-        username = (attrs.get("username") or attrs.get("user") or "").lstrip("@")
-        description = attrs.get("description") or attrs.get("about") or "\n".join(body.strip().splitlines()[1:]).strip()
-        if not username:
-            return "Bot username is required"
-        if not username.lower().endswith("bot"):
-            return "Bot username must end with 'bot'"
-
-        token_re = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{20,}\b")
-        try:
-            async with self.client.conversation("BotFather", timeout=120, exclusive=False) as conv:
-                await conv.send_message("/newbot")
-                await conv.get_response()
-                await conv.send_message(name[:64])
-                await conv.get_response()
-                await conv.send_message(username[:32])
-                response = await conv.get_response()
-                text = getattr(response, "raw_text", None) or getattr(response, "text", "") or ""
-                token_match = token_re.search(text)
-                if not token_match:
-                    return f"BotFather did not return token. Response: {text[:1000]}"
-                token = token_match.group(0)
-
-                if description:
-                    try:
-                        await conv.send_message("/setdescription")
-                        await conv.get_response()
-                        await conv.send_message(f"@{username}")
-                        await conv.get_response()
-                        await conv.send_message(description[:512])
-                        await conv.get_response()
-                    except Exception as exc:
-                        return f"Bot created @{username}\nToken: {token}\nDescription failed: {exc}"
-        except Exception as exc:
-            return f"Bot creation failed: {exc}"
-
-        return f"Bot created: @{username}\nName: {name}\nToken: {token}"
 
     async def _resolve_tool_chat(self, chat: str | None, source_event: Any | None) -> Any:
         await asyncio.sleep(0)
@@ -2602,41 +2547,6 @@ class OpenAgent(ModuleBase):
                     return sender
         raise ValueError("user is required or reply to a user's message")
 
-    async def _history_tool(self, attrs_raw: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        lines = []
-        try:
-            async for msg in self.client.iter_messages(chat, limit=limit):
-                sender = await msg.get_sender()
-                name = self._format_sender_short(sender)
-                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
-                media = " [media]" if getattr(msg, "media", None) else ""
-                lines.append(f"#{msg.id} {name}: {text[:500]}{media}".strip())
-        except Exception as exc:
-            return f"Could not read history: {exc}"
-        return "\n".join(reversed(lines)) or "No messages found"
-
-    async def _search_messages_tool(
-        self, attrs_raw: str, body: str, source_event: Any | None
-    ) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        query = attrs.get("query") or body.strip()
-        if not query:
-            return "Search query is empty"
-        limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
-        chat = await self._resolve_tool_chat(attrs.get("chat") or attrs.get("chat_id"), source_event)
-        lines = []
-        try:
-            async for msg in self.client.iter_messages(chat, search=query, limit=limit):
-                sender = await msg.get_sender()
-                name = self._format_sender_short(sender)
-                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
-                lines.append(f"#{msg.id} {name}: {text[:500]}")
-        except Exception as exc:
-            return f"Could not search messages: {exc}"
-        return "\n".join(lines) or "No messages found"
 
     def _format_sender_short(self, sender: Any) -> str:
         if sender is None:
@@ -2649,77 +2559,6 @@ class OpenAgent(ModuleBase):
         ) or getattr(sender, "title", None) or "Unknown"
         return f"{name} {username}".strip()
 
-    async def _update_profile_tool(self, attrs_raw: str, body: str) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        first_name = attrs.get("first_name") or attrs.get("name")
-        last_name = attrs.get("last_name")
-        about = attrs.get("about") or attrs.get("bio") or body.strip() or None
-        username = attrs.get("username")
-        lines = []
-        try:
-            if first_name or last_name or about:
-                await self.client(
-                    UpdateProfileRequest(
-                        first_name=first_name,
-                        last_name=last_name,
-                        about=about,
-                    )
-                )
-                lines.append("profile updated")
-            if username:
-                await self.client(UpdateAccountUsernameRequest(username=username.lstrip("@")))
-                lines.append(f"username set: @{username.lstrip('@')}")
-        except Exception as exc:
-            return f"Could not update profile: {exc}"
-        return "\n".join(lines) or "Nothing to update"
-
-    async def _set_profile_photo_tool(
-        self, attrs_raw: str, source_event: Any | None
-    ) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        data: bytes | None = None
-        mime_type = "image/jpeg"
-        url = attrs.get("url") or attrs.get("avatar_url") or attrs.get("photo_url")
-        if url:
-            fetched = await self._fetch_url_bytes(url)
-            if fetched:
-                data, mime_type = fetched
-        elif source_event is not None and attrs.get("avatar_reply", "").lower() in {"1", "true", "yes"}:
-            reply = await source_event.get_reply_message()
-            if reply and getattr(reply, "media", None):
-                data = await reply.download_media(file=bytes)
-                file_obj = getattr(reply, "file", None)
-                mime_type = getattr(file_obj, "mime_type", None) or "image/jpeg"
-        if not data:
-            return "No photo data found"
-        if not mime_type.startswith("image/"):
-            return "Profile photo must be an image"
-        ext = mimetypes.guess_extension(mime_type) or ".jpg"
-        buf = io.BytesIO(data)
-        buf.name = f"profile{ext}"
-        try:
-            uploaded = await self.client.upload_file(buf)
-            await self.client(UploadProfilePhotoRequest(file=uploaded))
-        except Exception as exc:
-            return f"Could not set profile photo: {exc}"
-        return "profile photo updated"
-
-    async def _join_chat_tool(self, attrs_raw: str, body: str) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        target = attrs.get("chat") or attrs.get("url") or body.strip()
-        if not target:
-            return "Join target is empty"
-        target = target.strip()
-        try:
-            invite_match = re.search(r"(?:joinchat/|\+)([A-Za-z0-9_-]+)", target)
-            if invite_match:
-                result = await self.client(ImportChatInviteRequest(invite_match.group(1)))
-                return f"joined by invite: {getattr(result, 'chats', [])}"
-            entity = target.replace("https://t.me/", "").lstrip("@")
-            result = await self.client(JoinChannelRequest(entity))
-            return f"joined: {getattr(result, 'chats', [])}"
-        except Exception as exc:
-            return f"Could not join chat: {exc}"
 
     async def _message_id_from_attrs(
         self, attrs: dict[str, str], body: str, source_event: Any | None
@@ -2736,397 +2575,6 @@ class OpenAgent(ModuleBase):
                 return getattr(reply, "id", None)
         return None
 
-    async def _pin_message_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        msg_id = await self._message_id_from_attrs(attrs, body, source_event)
-        if not msg_id:
-            return "Message id is required or reply to a message"
-        notify = attrs.get("notify", "false").lower() in {"1", "true", "yes"}
-        try:
-            await self.client.pin_message(chat, msg_id, notify=notify)
-        except Exception as exc:
-            return f"Could not pin message: {exc}"
-        return f"Pinned message {msg_id} in {chat}"
-
-    async def _delete_messages_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        raw_ids = attrs.get("ids") or attrs.get("id") or body.strip()
-        ids: list[int] = []
-        if raw_ids and raw_ids.lower() not in {"reply", "replied"}:
-            for part in re.split(r"[\s,]+", raw_ids):
-                if part.strip().isdigit():
-                    ids.append(int(part.strip()))
-        elif source_event is not None:
-            reply = await source_event.get_reply_message()
-            if reply:
-                ids.append(reply.id)
-        if not ids:
-            return "Message ids are required or reply to a message"
-        try:
-            result = await self.client.delete_messages(chat, ids)
-        except Exception as exc:
-            return f"Could not delete messages: {exc}"
-        return f"Delete requested for {len(ids)} message(s): {result}"
-
-    async def _forward_message_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        src = await self._resolve_tool_chat(attrs.get("from") or attrs.get("src"), source_event)
-        dst = await self._resolve_tool_chat(attrs.get("to") or attrs.get("dst") or body.strip(), source_event)
-        msg_id = await self._message_id_from_attrs(attrs, "", source_event)
-        if not msg_id:
-            return "Message id is required or reply to a message"
-        try:
-            sent = await self.client.forward_messages(dst, msg_id, from_peer=src)
-        except Exception as exc:
-            return f"Could not forward message: {exc}"
-        return f"Forwarded message {msg_id} to {dst}, new id={getattr(sent, 'id', None)}"
-
-    async def _download_media_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        if source_event is None:
-            return "No source event available"
-        reply = await source_event.get_reply_message()
-        if not reply or not getattr(reply, "media", None):
-            return "Reply to a media message first"
-        directory = Path(attrs.get("path") or body.strip() or "openagent_downloads")
-        if not directory.is_absolute():
-            directory = Path.cwd() / directory
-        directory.mkdir(parents=True, exist_ok=True)
-        try:
-            path = await reply.download_media(file=str(directory))
-        except Exception as exc:
-            return f"Could not download media: {exc}"
-        return f"Media downloaded: {path}"
-
-    async def _send_file_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        path_raw = attrs.get("path") or attrs.get("file")
-        if not path_raw:
-            return "File path is required"
-        path = Path(path_raw).expanduser()
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        if not path.exists() or not path.is_file():
-            return f"File not found: {path}"
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        caption = body.strip() or attrs.get("caption") or None
-        try:
-            sent = await self.client.send_file(chat, str(path), caption=caption)
-        except Exception as exc:
-            return f"Could not send file: {exc}"
-        return f"File sent to {chat}, id={getattr(sent, 'id', None)}"
-
-    async def _mute_user_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        minutes = max(1, int(attrs.get("minutes", "60") or 60))
-        until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-        try:
-            await self.client.edit_permissions(chat, user, until_date=until, send_messages=False)
-        except Exception as exc:
-            return f"Could not mute user: {exc}"
-        return f"Muted user for {minutes} minute(s). Reason: {body.strip() or 'not specified'}"
-
-    async def _unmute_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        try:
-            await self.client.edit_permissions(chat, user, send_messages=True)
-        except Exception as exc:
-            return f"Could not unmute user: {exc}"
-        return "User unmuted"
-
-    async def _ban_user_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        try:
-            await self.client.edit_permissions(chat, user, view_messages=False)
-        except Exception as exc:
-            return f"Could not ban user: {exc}"
-        return f"User banned. Reason: {body.strip() or 'not specified'}"
-
-    async def _unban_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        try:
-            await self.client.edit_permissions(chat, user, view_messages=True, send_messages=True)
-        except Exception as exc:
-            return f"Could not unban user: {exc}"
-        return "User unbanned"
-
-    async def _kick_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        try:
-            await self.client.kick_participant(chat, user)
-        except Exception as exc:
-            return f"Could not kick user: {exc}"
-        return "User kicked"
-
-    async def _promote_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        rank = attrs.get("rank") or "Admin"
-        rights = ChatAdminRights(
-            change_info=True,
-            delete_messages=True,
-            ban_users=True,
-            invite_users=True,
-            pin_messages=True,
-            manage_call=True,
-            manage_topics=True,
-        )
-        try:
-            await self.client(EditAdminRequest(channel=chat, user_id=user, admin_rights=rights, rank=rank[:16]))
-        except Exception as exc:
-            return f"Could not promote user: {exc}"
-        return f"User promoted with rank: {rank}"
-
-    async def _demote_user_tool(self, attrs_raw: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        user = await self._resolve_tool_user(attrs.get("user"), source_event)
-        rights = ChatAdminRights()
-        try:
-            await self.client(EditAdminRequest(channel=chat, user_id=user, admin_rights=rights, rank=""))
-        except Exception as exc:
-            return f"Could not demote user: {exc}"
-        return "User demoted"
-
-    async def _set_slowmode_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        seconds = int(attrs.get("seconds") or body.strip() or 0)
-        seconds = max(0, min(seconds, 3600))
-        try:
-            await self.client(ToggleSlowModeRequest(channel=chat, seconds=seconds))
-        except Exception as exc:
-            return f"Could not set slowmode: {exc}"
-        return f"Slowmode set to {seconds}s"
-
-    async def _set_chat_title_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        title = (attrs.get("title") or body.strip())[:128]
-        if not title:
-            return "Title is empty"
-        try:
-            await self.client(EditTitleRequest(channel=chat, title=title))
-        except Exception as exc:
-            return f"Could not set chat title: {exc}"
-        return f"Chat title set: {title}"
-
-    async def _set_chat_about_tool(self, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-        about = (attrs.get("about") or attrs.get("description") or body.strip())[:255]
-        try:
-            await self.client(EditChatAboutRequest(peer=chat, about=about))
-        except Exception as exc:
-            return f"Could not set chat about: {exc}"
-        return "Chat description updated"
-
-    async def _misc_tool(self, name: str, attrs_raw: str, body: str, source_event: Any | None) -> str:
-        attrs = self._parse_xml_attrs(attrs_raw)
-        try:
-            if name == "search_dialogs":
-                query = (attrs.get("query") or body.strip()).lower()
-                limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
-                if not query:
-                    return "query is required"
-                lines = []
-                async for dialog in self.client.iter_dialogs(limit=300):
-                    entity = dialog.entity
-                    username = getattr(entity, "username", None) or ""
-                    title = getattr(dialog, "name", None) or getattr(entity, "title", None) or " ".join(
-                        p
-                        for p in (getattr(entity, "first_name", None), getattr(entity, "last_name", None))
-                        if p
-                    )
-                    haystack = f"{title} {username}".lower()
-                    if query in haystack:
-                        lines.append(f"{title} @{username} [id={getattr(entity, 'id', None)}]".strip())
-                    if len(lines) >= limit:
-                        break
-                return "\n".join(lines) or "No dialogs found"
-
-            if name == "get_permissions":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                user = await self._resolve_tool_user(attrs.get("user"), source_event)
-                perms = await self.client.get_permissions(chat, user)
-                return "\n".join(
-                    f"{key}: {value}"
-                    for key, value in sorted(vars(perms).items())
-                    if not key.startswith("_")
-                )[:4000]
-
-            if name == "get_common_chats":
-                user = await self._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
-                limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
-                chats = await self.client.get_common_chats(user, limit=limit)
-                lines = []
-                for chat in chats:
-                    title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "Unknown"
-                    username = f"@{chat.username}" if getattr(chat, "username", None) else ""
-                    lines.append(f"{title} {username} [id={getattr(chat, 'id', None)}]".strip())
-                return "\n".join(lines) or "No common chats found"
-
-            if name == "get_profile_photos":
-                user = await self._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
-                limit = max(1, min(int(attrs.get("limit", "3") or 3), 20))
-                directory = Path(attrs.get("path") or "openagent_downloads")
-                if not directory.is_absolute():
-                    directory = Path.cwd() / directory
-                directory.mkdir(parents=True, exist_ok=True)
-                photos = await self.client.get_profile_photos(user, limit=limit)
-                paths = []
-                for idx, photo in enumerate(photos, 1):
-                    path = await self.client.download_media(photo, file=str(directory / f"profile_photo_{idx}.jpg"))
-                    paths.append(str(path))
-                return "\n".join(paths) or "No profile photos found"
-
-            if name == "schedule_message":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                at_raw = attrs.get("at") or attrs.get("time")
-                if not at_raw:
-                    return "at/time attribute is required"
-                text = body.strip()
-                if not text:
-                    return "message text is empty"
-                at = datetime.fromisoformat(at_raw.replace("Z", "+00:00"))
-                if at.tzinfo is None:
-                    at = at.astimezone()
-                sent = await self.client.send_message(chat, text, schedule=at)
-                return f"Message scheduled to {chat} at {at.isoformat()}, id={getattr(sent, 'id', None)}"
-
-            if name == "get_me":
-                return await self._format_full_profile(await self.client.get_me())
-
-            if name == "get_entity":
-                target = attrs.get("target") or attrs.get("user") or attrs.get("chat") or body.strip()
-                if not target:
-                    return "target is required"
-                try:
-                    entity = await self.client.get_entity(int(target))
-                except ValueError:
-                    entity = await self.client.get_entity(target)
-                return await self._format_full_profile(entity)
-
-            if name == "get_admins":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                lines = []
-                async for user in self.client.iter_participants(chat, filter=ChannelParticipantsAdmins):
-                    lines.append(self._format_sender_short(user) + f" [id={getattr(user, 'id', None)}]")
-                return "\n".join(lines) or "No admins found"
-
-            if name == "export_invite":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                invite = await self.client(ExportChatInviteRequest(peer=chat, title=attrs.get("title") or "OpenAgent"))
-                return getattr(invite, "link", str(invite))
-
-            if name == "mark_read":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                await self.client.send_read_acknowledge(chat)
-                return "Marked as read"
-
-            if name in {"archive_dialog", "unarchive_dialog"}:
-                chat = await self._resolve_tool_chat(attrs.get("chat") or body.strip(), source_event)
-                await self.client.edit_folder(chat, 1 if name == "archive_dialog" else 0)
-                return "Dialog archived" if name == "archive_dialog" else "Dialog unarchived"
-
-            if name == "leave_chat":
-                chat = await self._resolve_tool_chat(attrs.get("chat") or body.strip(), source_event)
-                await self.client.delete_dialog(chat)
-                return f"Left/deleted dialog: {chat}"
-
-            if name in {"block_user", "unblock_user", "delete_contact"}:
-                user = await self._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
-                input_user = await self.client.get_input_entity(user)
-                if name == "block_user":
-                    await self.client(BlockRequest(input_user))
-                    return "User blocked"
-                if name == "unblock_user":
-                    await self.client(UnblockRequest(input_user))
-                    return "User unblocked"
-                await self.client(DeleteContactsRequest([input_user]))
-                return "Contact deleted"
-
-            if name == "add_contact":
-                user = await self._resolve_tool_user(attrs.get("user"), source_event)
-                input_user = await self.client.get_input_entity(user)
-                await self.client(
-                    AddContactRequest(
-                        id=input_user,
-                        first_name=attrs.get("first_name") or attrs.get("name") or "Contact",
-                        last_name=attrs.get("last_name") or "",
-                        phone=attrs.get("phone") or "",
-                    )
-                )
-                return "Contact added"
-
-            if name == "save_draft":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                await self.client(SaveDraftRequest(peer=chat, message=body.strip()))
-                return "Draft saved"
-
-            if name in {"edit_message", "reply_message", "react_message", "get_message"}:
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                msg_id = await self._message_id_from_attrs(attrs, "", source_event)
-                if not msg_id:
-                    return "message id is required or reply to a message"
-                if name == "edit_message":
-                    await self.client.edit_message(chat, msg_id, body.strip())
-                    return "Message edited"
-                if name == "reply_message":
-                    sent = await self.client.send_message(chat, body.strip(), reply_to=msg_id)
-                    return f"Reply sent, id={getattr(sent, 'id', None)}"
-                if name == "react_message":
-                    if not hasattr(self.client, "send_reaction"):
-                        return "send_reaction is not available"
-                    await self.client.send_reaction(chat, msg_id, reaction=(body.strip() or attrs.get("reaction") or "👍"))
-                    return "Reaction sent"
-                msg = await self.client.get_messages(chat, ids=msg_id)
-                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
-                return f"#{msg_id}: {text[:3000]}"
-
-            if name == "typing":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                seconds = max(1, min(int(attrs.get("seconds", "3") or 3), 15))
-                async with self.client.action(chat, "typing"):
-                    await asyncio.sleep(seconds)
-                return f"Typing action shown for {seconds}s"
-
-            if name == "set_chat_username":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                username = (attrs.get("username") or body.strip()).lstrip("@")
-                await self.client(UpdateUsernameRequest(channel=chat, username=username))
-                return f"Chat username set: @{username}"
-
-            if name == "set_chat_photo":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                result = await self._set_channel_avatar(chat, attrs, source_event)
-                return result or "No photo data found"
-
-            if name == "get_chat_photo":
-                chat = await self._resolve_tool_chat(attrs.get("chat"), source_event)
-                directory = Path(attrs.get("path") or "openagent_downloads")
-                if not directory.is_absolute():
-                    directory = Path.cwd() / directory
-                directory.mkdir(parents=True, exist_ok=True)
-                path = await self.client.download_profile_photo(chat, file=str(directory))
-                return f"Chat photo downloaded: {path}"
-
-        except Exception as exc:
-            return f"{name} failed: {exc}"
-        return f"Unknown tool: {name}"
 
     async def _show_agent_action(
         self,
@@ -4344,6 +3792,207 @@ class OpenAgent(ModuleBase):
         await self.edit(event, f"Skill deleted: <code>{html.escape(self._skill_name_from_path(path))}</code>", as_html=True)
 
 
+    # ── Plugin manager ──
+
+    @command("oaplugin", doc_ru="управление плагинами OpenAgent", doc_en="manage OpenAgent plugins")
+    async def cmd_oaplugin(self, event: events.NewMessage.Event) -> None:
+        """Show plugin manager or install a plugin from replied .py file."""
+        if await event.get_reply_message():
+            try:
+                saved_name = await self._install_plugin_from_reply(event)
+            except Exception as exc:
+                await self.edit(event, f"Plugin install failed: <code>{html.escape(str(exc))}</code>", as_html=True)
+                return
+            await self.edit(event, f"Plugin installed: <code>{html.escape(saved_name)}</code>", as_html=True)
+            return
+
+        installed = self._plugins
+        text = "<b>🧩 Включёные плагины:</b>\n"
+        if not installed:
+            text += "\nНет установленных плагинов\n"
+        else:
+            for pname, plugin in installed.items():
+                desc = getattr(plugin, "description", "?") or "?"
+                author = getattr(plugin, "author", "?") or "?"
+                text += f"<blockquote>{pname} - {desc} | by {author}</blockquote>\n"
+        text += f"\n<b>Всего плагинов:</b> {len(installed)}"
+
+        buttons = [[
+            self.Button.inline("📦 Каталог", self._oaplugin_catalog, args=(0,)),
+            self.Button.inline("⚙️ Менеджер", self._oaplugin_manager, args=(0,)),
+        ], [
+            self.Button.inline("❌ Закрыть", self._oaplugin_close),
+        ]]
+
+        chat_id = getattr(event, "chat_id", None)
+        if chat_id:
+            try:
+                await self.inline(chat_id, text, buttons=buttons, ttl=900, parse_mode="html")
+                await event.delete()
+            except Exception:
+                await self.edit(event, text, as_html=True)
+        else:
+            await self.edit(event, text, as_html=True)
+
+    @callback(ttl=900)
+    async def _oaplugin_close(self, call: events.CallbackQuery.Event) -> None:
+        try:
+            await call.delete()
+        except Exception:
+            await call.answer()
+
+    @callback(ttl=900)
+    async def _oaplugin_catalog(self, call: events.CallbackQuery.Event, page: int = 0) -> None:
+        """Show available plugins from repo (xheta-style)."""
+        plugins = self._plugins_cache
+        if not plugins:
+            plugins = await self._fetch_repo_plugins()
+        if not plugins:
+            await call.answer("❌ Нет плагинов в репозитории", alert=True)
+            return
+        if page < 0 or page >= len(plugins):
+            await call.answer()
+            return
+        m = plugins[page]
+        name = m.get("name", "?")
+        author = m.get("author", "?")
+        version = m.get("version", "?")
+        desc = m.get("description", "Нет описания")
+        tools = m.get("tools", [])
+        fname = m.get("file_name", "")
+        installed = fname.replace(".py", "") in {p.name for p in self._plugins.values()}
+
+        text = f"📦 <b>{name}</b> v{version} by <code>{author}</code>\n\n"
+        text += f"📝 {desc}\n"
+        if tools:
+            tools_str = ", ".join(f"<code>{t}</code>" for t in tools[:8])
+            if len(tools) > 8:
+                tools_str += f" ...и ещё {len(tools) - 8}"
+            text += f"\n🔧 <b>Tools:</b> {tools_str}"
+        text += f"\n\n🔢 {page + 1}/{len(plugins)}"
+
+        buttons = []
+        raw_url = m.get("download_url", "")
+        if installed:
+            buttons.append([self.Button.inline("✅ Установлен", self._oaplugin_noop)])
+        else:
+            buttons.append([self.Button.inline("📥 Установить", self._oaplugin_install, args=(fname.replace(".py", ""), page))])
+        if raw_url:
+            buttons[0].append(self.Button.url("📄 Код", raw_url))
+
+        nav = []
+        if page > 0:
+            nav.append(self.Button.inline("⬅️", self._oaplugin_catalog, args=(page - 1,)))
+        nav.append(self.Button.inline(f"📋 {page + 1}/{len(plugins)}", self._oaplugin_noop))
+        if page < len(plugins) - 1:
+            nav.append(self.Button.inline("➡️", self._oaplugin_catalog, args=(page + 1,)))
+        if nav:
+            buttons.append(nav)
+        buttons.append([self.Button.inline("🔙 Назад", self._oaplugin_main)])
+
+        try:
+            await call.edit(text, buttons=buttons, parse_mode="html")
+        except Exception:
+            pass
+
+    @callback(ttl=900)
+    async def _oaplugin_noop(self, call: events.CallbackQuery.Event) -> None:
+        await call.answer()
+
+    @callback(ttl=900)
+    async def _oaplugin_main(self, call: events.CallbackQuery.Event) -> None:
+        """Return to main plugin page."""
+        installed = self._plugins
+        text = "<b>🧩 Включёные плагины:</b>\n"
+        if not installed:
+            text += "\nНет установленных плагинов\n"
+        else:
+            for pname, plugin in installed.items():
+                desc = getattr(plugin, "description", "?") or "?"
+                author = getattr(plugin, "author", "?") or "?"
+                text += f"<blockquote>{pname} - {desc} | by {author}</blockquote>\n"
+        text += f"\n<b>Всего плагинов:</b> {len(installed)}"
+        buttons = [[
+            self.Button.inline("📦 Каталог", self._oaplugin_catalog, args=(0,)),
+            self.Button.inline("⚙️ Менеджер", self._oaplugin_manager, args=(0,)),
+        ], [
+            self.Button.inline("❌ Закрыть", self._oaplugin_close),
+        ]]
+        try:
+            await call.edit(text, buttons=buttons, parse_mode="html")
+        except Exception:
+            pass
+
+    @callback(ttl=900)
+    async def _oaplugin_install(self, call: events.CallbackQuery.Event, name: str, page: int = 0) -> None:
+        """Download and install a plugin from repo."""
+        await call.answer("⏳ Устанавливаю...", alert=False)
+        try:
+            saved_name = await self._install_plugin_from_repo(name)
+            await call.answer(f"✅ {saved_name} установлен!", alert=True)
+        except Exception as exc:
+            await call.answer(f"❌ Ошибка: {exc}", alert=True)
+            return
+        plugins = self._plugins_cache
+        if plugins and page < len(plugins):
+            await self._oaplugin_catalog(call, page)
+        else:
+            await self._oaplugin_catalog(call, 0)
+
+    @callback(ttl=900)
+    async def _oaplugin_manager(self, call: events.CallbackQuery.Event, page: int = 0) -> None:
+        """Show installed plugins with delete option."""
+        installed = list(self._plugins.values())
+        if not installed:
+            await call.answer("Нет установленных плагинов", alert=True)
+            return
+        if page < 0 or page >= len(installed):
+            await call.answer()
+            return
+        plugin = installed[page]
+        text = f"<b>⚙️ {plugin.name}</b>\n"
+        text += f"Версия: {getattr(plugin, 'version', '?')}\n"
+        text += f"Tools: {len(getattr(plugin, 'tool_registry', ()))}\n\n"
+        text += "<b>Действия:</b>"
+        row1 = [self.Button.inline("🗑 Удалить", self._oaplugin_uninstall, args=(plugin.name, page))]
+        buttons = [row1]
+        if len(installed) > 1:
+            nav = []
+            if page > 0:
+                nav.append(self.Button.inline("⬅️", self._oaplugin_manager, args=(page - 1,)))
+            nav.append(self.Button.inline(f"{page + 1}/{len(installed)}", self._oaplugin_noop))
+            if page < len(installed) - 1:
+                nav.append(self.Button.inline("➡️", self._oaplugin_manager, args=(page + 1,)))
+            buttons.append(nav)
+        buttons.append([self.Button.inline("🔙 Назад", self._oaplugin_main)])
+        try:
+            await call.edit(text, buttons=buttons, parse_mode="html")
+        except Exception:
+            pass
+
+    @callback(ttl=900)
+    async def _oaplugin_uninstall(self, call: events.CallbackQuery.Event, name: str, page: int = 0) -> None:
+        """Delete a plugin."""
+        try:
+            name = str(name or "").strip().lower()
+            fpath = self._plugin_files.get(name)
+            self._unregister_plugin(name)
+            plugins_dir = self._resolve_plugins_dir()
+            if fpath and fpath.exists():
+                try:
+                    fpath.relative_to(plugins_dir)
+                    fpath.unlink()
+                except ValueError:
+                    pass
+            for extra in (plugins_dir / f"{name}.py", plugins_dir / f"{name}_plugin.py"):
+                if extra.exists():
+                    extra.unlink()
+            await call.answer(f"🗑 {name} удалён", alert=True)
+        except Exception as exc:
+            await call.answer(f"❌ Ошибка: {exc}", alert=True)
+            return
+        await self._oaplugin_manager(call, min(page, len(self._plugins) - 1) if self._plugins else 0)
+
     def _tool_attr_or_body(self, attrs_raw: str, body: str, *keys: str) -> str:
         attrs = self._parse_xml_attrs(attrs_raw)
         for key in keys:
@@ -4352,38 +4001,6 @@ class OpenAgent(ModuleBase):
                 return value.strip()
         return (body or "").strip()
 
-    async def _terminal_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
-        """Handle structured terminal.* aliases advertised to the model."""
-        attrs = self._parse_xml_attrs(attrs_raw)
-        if tool_name == "terminal.git_status":
-            return await self._run_terminal("git status --short")
-        if tool_name == "terminal.list_files":
-            path = attrs.get("path") or body.strip() or "."
-            return await self._run_terminal(f"python - <<'PY'\nfrom pathlib import Path\np=Path({path!r})\nprint('\\n'.join(sorted(x.name + ('/' if x.is_dir() else '') for x in p.iterdir())))\nPY")
-        if tool_name == "terminal.read_file":
-            path = attrs.get("path") or attrs.get("file") or body.strip()
-            if not path:
-                return "path is required"
-            return await self._run_terminal(f"python - <<'PY'\nfrom pathlib import Path\np=Path({path!r})\nprint(p.read_text(encoding='utf-8', errors='replace')[:12000])\nPY")
-        if tool_name == "terminal.inspect":
-            command = body.strip() or attrs.get("command") or attrs.get("cmd") or "pwd"
-            return await self._run_terminal(command)
-        return await self._run_terminal(body.strip())
-
-    async def _file_read_text_tool(self, attrs_raw: str, body: str) -> str:
-        await asyncio.sleep(0)
-        path_raw = self._tool_attr_or_body(attrs_raw, body, "path", "file", "name")
-        if not path_raw:
-            return "File path is required"
-        path = Path(path_raw).expanduser()
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        try:
-            if not path.is_file():
-                return f"File not found: {path}"
-            return path.read_text(encoding="utf-8", errors="replace")[:12000]
-        except Exception as exc:
-            return f"Could not read file: {exc}"
 
     async def _skills_registry_tool(self, tool_name: str, attrs_raw: str, body: str) -> str:
         await asyncio.sleep(0)
@@ -4588,35 +4205,10 @@ class OpenAgent(ModuleBase):
 
 
     def _get_tool_map(self) -> dict[str, str]:
-        """Unified mapping of tool tags to internal methods."""
-        return {
-            "terminal": "_run_terminal",
-            "terminal.run": "_run_terminal",
-            "terminal.inspect": "_terminal_registry_tool",
-            "terminal.list_files": "_terminal_registry_tool",
-            "terminal.read_file": "_terminal_registry_tool",
-            "terminal.git_status": "_terminal_registry_tool",
-            "web_search": "_web_search",
-            "web.search": "_web_search",
-            "web.fetch_url": "_web_search",
-            "web.read_html": "_web_search",
-            "web.extract_links": "_web_search",
-            "web.summarize_page": "_web_search",
-            "mcub": "_run_mcub_command",
-            "mcub.command": "_run_mcub_command",
-            "mcub.config": "_run_mcub_command",
-            "mcub.modules": "_run_mcub_command",
-            "mcub.install": "_run_mcub_command",
-            "mcub.reload": "_run_mcub_command",
-            "send_message": "_send_userbot_message",
-            "message.send": "_send_userbot_message",
-            "message.send_current": "_send_userbot_message",
-            "message.send_target": "_send_userbot_message",
-            "dialogs": "_dialogs_tool",
-            "dialog.list": "_dialogs_tool",
-            "dialog.list_private": "_dialogs_tool",
-            "dialog.list_groups": "_dialogs_tool",
-            "dialog.list_all": "_dialogs_tool",
+        """Unified mapping of tool tags to internal methods. Merges core + plugin maps."""
+        core = {
+            # Core tools tightly coupled with module internals.
+            "thinking.note": "_thinking_note_tool",
             "skill": "_save_skill",
             "skill.save": "_save_skill",
             "skills.list": "_skills_registry_tool",
@@ -4627,108 +4219,16 @@ class OpenAgent(ModuleBase):
             "skills.save_from_ai": "_skills_registry_tool",
             "skills.install": "_skills_registry_tool",
             "skills.repo_list": "_skills_registry_tool",
-            "chat": "_chat_tool",
-            "chat.info": "_chat_tool",
-            "chat.participants": "_chat_tool",
-            "chat.admins": "_misc_tool",
-            "moderation.get_admins": "_misc_tool",
-            "chat.permissions": "_misc_tool",
-            "chat.common_with_user": "_misc_tool",
-            "profile": "_profile_tool",
-            "profile.get": "_profile_tool",
-            "profile.get_full": "_profile_tool",
-            "profile.get_me": "_misc_tool",
-            "profile.get_photos": "_misc_tool",
-            "profile.common_chats": "_misc_tool",
-            "profile.set_photo": "_set_profile_photo_tool",
-            "set_profile_photo": "_set_profile_photo_tool",
-            "create_channel": "_create_channel_or_group",
-            "creation.channel": "_create_channel_or_group",
-            "create_group": "_create_channel_or_group",
-            "creation.group": "_create_channel_or_group",
-            "create_bot": "_create_bot_via_botfather",
-            "creation.bot": "_create_bot_via_botfather",
-            "history": "_history_tool",
-            "message.history": "_history_tool",
-            "search_messages": "_search_messages_tool",
-            "message.search": "_search_messages_tool",
-            "chat.search": "_search_messages_tool",
-            "update_profile": "_update_profile_tool",
-            "profile.update": "_update_profile_tool",
-            "profile.update_name": "_update_profile_tool",
-            "profile.update_bio": "_update_profile_tool",
-            "profile.update_username": "_update_profile_tool",
-            "join_chat": "_join_chat_tool",
-            "pin_message": "_pin_message_tool",
-            "message.pin": "_pin_message_tool",
-            "moderation.pin": "_pin_message_tool",
-            "delete_messages": "_delete_messages_tool",
-            "message.delete": "_delete_messages_tool",
-            "moderation.delete_messages": "_delete_messages_tool",
-            "forward_message": "_forward_message_tool",
-            "message.forward": "_forward_message_tool",
-            "download_media": "_download_media_tool",
-            "file.download": "_download_media_tool",
-            "file.download_media": "_download_media_tool",
-            "send_file": "_send_file_tool",
-            "file.send": "_send_file_tool",
-            "file.read_text": "_file_read_text_tool",
-            "mute_user": "_mute_user_tool",
-            "chat.mute": "_mute_user_tool",
-            "moderation.mute": "_mute_user_tool",
-            "unmute_user": "_unmute_user_tool",
-            "chat.unmute": "_unmute_user_tool",
-            "moderation.unmute": "_unmute_user_tool",
-            "ban_user": "_ban_user_tool",
-            "chat.ban": "_ban_user_tool",
-            "moderation.ban": "_ban_user_tool",
-            "unban_user": "_unban_user_tool",
-            "chat.unban": "_unban_user_tool",
-            "moderation.unban": "_unban_user_tool",
-            "kick_user": "_kick_user_tool",
-            "chat.kick": "_kick_user_tool",
-            "moderation.kick": "_kick_user_tool",
-            "promote_user": "_promote_user_tool",
-            "chat.promote": "_promote_user_tool",
-            "moderation.promote": "_promote_user_tool",
-            "demote_user": "_demote_user_tool",
-            "chat.demote": "_demote_user_tool",
-            "moderation.demote": "_demote_user_tool",
-            "set_slowmode": "_set_slowmode_tool",
-            "chat.slowmode": "_set_slowmode_tool",
-            "set_chat_title": "_set_chat_title_tool",
-            "chat.set_title": "_set_chat_title_tool",
-            "set_chat_about": "_set_chat_about_tool",
-            "chat.set_about": "_set_chat_about_tool",
-            "dialog.search": "_misc_tool",
-            "dialog.archive": "_misc_tool",
-            "dialog.unarchive": "_misc_tool",
-            "dialog.leave": "_misc_tool",
-            "dialog.export_invite": "_misc_tool",
-            "dialog.get_photo": "_misc_tool",
-            "dialog.set_photo": "_misc_tool",
-            "chat.set_username": "_misc_tool",
-            "chat.invite_link": "_misc_tool",
-            "message.edit": "_misc_tool",
-            "message.reply": "_misc_tool",
-            "message.react": "_misc_tool",
-            "message.get": "_misc_tool",
-            "message.mark_read": "_misc_tool",
-            "message.typing": "_misc_tool",
-            "message.schedule": "_misc_tool",
-            "message.draft": "_misc_tool",
-            "contacts.add": "_misc_tool",
-            "contacts.delete": "_misc_tool",
-            "contacts.block": "_misc_tool",
-            "contacts.unblock": "_misc_tool",
-            "contacts.entity": "_misc_tool",
-            "profile.download_photo": "_misc_tool",
+            "code.generate_file": "_code_registry_tool",
+            "code.generate_mcub_module": "_code_registry_tool",
+            "code.choose_filename": "_code_registry_tool",
+            "code.attach_result": "_code_registry_tool",
+            "code.read_docs": "_fetch_mcub_docs",
             "context.remember": "_context_registry_tool",
             "context.clear": "_context_registry_tool",
             "context.regenerate": "_context_registry_tool",
             "context.reply_context": "_context_registry_tool",
             "context.media_context": "_context_registry_tool",
-            "thinking.note": "_thinking_note_tool",
             "todo.add": "_todo_registry_tool",
             "todo.delete": "_todo_registry_tool",
             "todo.edit": "_todo_registry_tool",
@@ -4736,13 +4236,19 @@ class OpenAgent(ModuleBase):
             "todo.close": "_todo_registry_tool",
             "todo.closeall": "_todo_registry_tool",
             "todo.clear": "_todo_registry_tool",
-            "code.read_docs": "_fetch_mcub_docs",
             "utility.token_usage": "_utility_registry_tool",
             "utility.placeholders": "_utility_registry_tool",
             "utility.random_template": "_utility_registry_tool",
             "utility.agent_log": "_utility_registry_tool",
             "utility.error_file": "_utility_registry_tool",
         }
+
+        for plugin in self._plugins.values():
+            for tname, handler in getattr(plugin, "tool_map", {}).items():
+                if not tname or not handler:
+                    continue
+                core[str(tname).strip().lower()] = str(handler).strip()
+        return core
 
     async def _dispatch_tool(
         self,
@@ -4758,60 +4264,32 @@ class OpenAgent(ModuleBase):
     ) -> str:
         name = name.lower().strip()
         tmap = self._get_tool_map()
-        misc_aliases = {
-            "chat.admins": "get_admins",
-            "moderation.get_admins": "get_admins",
-            "chat.permissions": "get_permissions",
-            "chat.common_with_user": "get_common_chats",
-            "profile.get_me": "get_me",
-            "profile.get_photos": "get_profile_photos",
-            "profile.common_chats": "get_common_chats",
-            "dialog.search": "search_dialogs",
-            "dialog.archive": "archive_dialog",
-            "dialog.unarchive": "unarchive_dialog",
-            "dialog.leave": "leave_chat",
-            "dialog.export_invite": "export_invite",
-            "dialog.get_photo": "get_chat_photo",
-            "dialog.set_photo": "set_chat_photo",
-            "chat.set_username": "set_chat_username",
-            "chat.invite_link": "export_invite",
-            "message.edit": "edit_message",
-            "message.reply": "reply_message",
-            "message.react": "react_message",
-            "message.get": "get_message",
-            "message.mark_read": "mark_read",
-            "message.typing": "typing",
-            "message.schedule": "schedule_message",
-            "message.draft": "save_draft",
-            "contacts.add": "add_contact",
-            "contacts.delete": "delete_contact",
-            "contacts.block": "block_user",
-            "contacts.unblock": "unblock_user",
-            "contacts.entity": "get_entity",
-            "profile.download_photo": "get_profile_photos",
-        }
+        # Plugin dispatch handles aliases via tool_map.
         
         # 1. Direct match or alias
         method_name = tmap.get(name)
         
-        # 2. Misc tool check (handles 50+ tools)
-        misc_tools = {
-            "get_me", "get_entity", "get_admins", "export_invite", "mark_read",
-            "archive_dialog", "unarchive_dialog", "leave_chat", "block_user", 
-            "unblock_user", "add_contact", "delete_contact", "save_draft", 
-            "edit_message", "reply_message", "react_message", "typing", 
-            "get_message", "set_chat_username", "set_chat_photo", "get_chat_photo",
-            "search_dialogs", "get_permissions", "get_common_chats", 
-            "get_profile_photos", "schedule_message", "blocked_users"
-        }
+
         
         handler_method = None
         is_misc = False
+        plugin_owner: "OpenAgentPlugin | None" = None
         
-        if method_name:
+        # Check plugin handlers first. Exact tool_map ownership supports
+        # legacy aliases like web_search/send_message/dialogs too.
+        plugin_owner = self._get_plugin_for_tool(name)
+        if plugin_owner:
+            if method_name and hasattr(plugin_owner, method_name):
+                handler_method = getattr(plugin_owner, method_name)
+            else:
+                pmap = getattr(plugin_owner, "tool_map", {})
+                p_handler = pmap.get(name)
+                if p_handler:
+                    handler_method = getattr(plugin_owner, p_handler, None)
+        if not handler_method and method_name:
             handler_method = getattr(self, method_name, None)
             is_misc = method_name == "_misc_tool"
-        elif name in misc_tools:
+        if not handler_method and name in misc_tools:
             handler_method = self._misc_tool
             is_misc = True
             
@@ -4858,9 +4336,6 @@ class OpenAgent(ModuleBase):
             params = sig.parameters
             
             kwargs = {}
-            if is_misc:
-                return await handler_method(misc_aliases.get(name, name), attrs_raw, body, source_event)
-            
             if "tool_name" in params: kwargs["tool_name"] = name
             if "attrs_raw" in params: kwargs["attrs_raw"] = attrs_raw
             if "body" in params: kwargs["body"] = body
@@ -4878,14 +4353,7 @@ class OpenAgent(ModuleBase):
                     kwargs["mode"] = body.strip() or self._parse_xml_attrs(attrs_raw).get("mode") or "private"
             if "target" in params: kwargs["target"] = body.strip() or self._parse_xml_attrs(attrs_raw).get("target", "")
             
-            # Special case for send_message (it doesnt use body/attrs_raw directly in sig)
-            if method_name == "_send_userbot_message":
-                attrs = self._parse_xml_attrs(attrs_raw)
-                chat = attrs.get("chat") or attrs.get("to") or attrs.get("target")
-                if name == "message.send_current":
-                    chat = None
-                result = await self._send_userbot_message(body.strip(), source_event, chat=chat)
-            elif method_name == "_run_mcub_command" and not kwargs.get("command"):
+            if method_name == "_run_mcub_command" and not kwargs.get("command"):
                 command_map = {
                     "mcub.modules": "modules",
                     "mcub.config": "cfg",

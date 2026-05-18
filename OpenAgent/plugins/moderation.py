@@ -48,31 +48,134 @@ class ModerationPlugin:
         self.agent = agent
 
     async def cmd_mute(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._mute_user_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
+        until = int(attrs.get("until") or attrs.get("time") or "3600")
+        from datetime import timedelta
+        try:
+            await self.agent.client.edit_permissions(chat, user, until_date=timedelta(seconds=until), send_messages=False)
+            return f"User muted for {until}s"
+        except Exception as exc:
+            return f"Mute failed: {exc}"
 
     async def cmd_unmute(self, attrs_raw: str, source_event: Any) -> str:
-        return await self.agent._unmute_user_tool(attrs_raw, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or "", source_event)
+        try:
+            await self.agent.client.edit_permissions(chat, user, send_messages=True)
+            return "User unmuted"
+        except Exception as exc:
+            return f"Unmute failed: {exc}"
 
     async def cmd_ban(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._ban_user_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or body.strip(), source_event)
+        try:
+            await self.agent.client.edit_permissions(chat, user, view_messages=False)
+            return "User banned"
+        except Exception as exc:
+            return f"Ban failed: {exc}"
 
     async def cmd_unban(self, attrs_raw: str, source_event: Any) -> str:
-        return await self.agent._unban_user_tool(attrs_raw, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or "", source_event)
+        try:
+            await self.agent.client.edit_permissions(chat, user, view_messages=True)
+            return "User unbanned"
+        except Exception as exc:
+            return f"Unban failed: {exc}"
 
     async def cmd_kick(self, attrs_raw: str, source_event: Any) -> str:
-        return await self.agent._kick_user_tool(attrs_raw, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or "", source_event)
+        try:
+            await self.agent.client.kick_participant(chat, user)
+            return "User kicked"
+        except Exception as exc:
+            return f"Kick failed: {exc}"
 
     async def cmd_promote(self, attrs_raw: str, source_event: Any) -> str:
-        return await self.agent._promote_user_tool(attrs_raw, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or "", source_event)
+        from telethon.tl.functions.channels import EditAdminRequest
+        from telethon.tl.types import ChatAdminRights
+        rights = ChatAdminRights(
+            change_info=True, post_messages=True, edit_messages=True,
+            delete_messages=True, ban_users=True, invite_users=True,
+            pin_messages=True, add_admins=True, manage_call=True,
+            other=True, anonymous=False,
+        )
+        try:
+            await self.agent.client(EditAdminRequest(chat, user, rights, rank=attrs.get("rank", "admin")))
+            return "User promoted"
+        except Exception as exc:
+            return f"Promote failed: {exc}"
 
     async def cmd_demote(self, attrs_raw: str, source_event: Any) -> str:
-        return await self.agent._demote_user_tool(attrs_raw, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        user = await self.agent._resolve_tool_user(attrs.get("user") or "", source_event)
+        from telethon.tl.functions.channels import EditAdminRequest
+        from telethon.tl.types import ChatAdminRights
+        try:
+            await self.agent.client(EditAdminRequest(chat, user, ChatAdminRights(), rank=""))
+            return "User demoted"
+        except Exception as exc:
+            return f"Demote failed: {exc}"
 
     async def cmd_pin(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._pin_message_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        msg_id = attrs.get("message") or attrs.get("msg") or body.strip()
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+        try:
+            if msg_id and msg_id.isdigit():
+                msg = await self.agent.client.get_messages(chat, ids=int(msg_id))
+            else:
+                reply = await source_event.get_reply_message() if source_event else None
+                msg = reply
+            if not msg:
+                return "Message not found"
+            await self.agent.client.pin_message(chat, msg.id)
+            return f"Message pinned"
+        except Exception as exc:
+            return f"Pin failed: {exc}"
 
     async def cmd_delete(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._delete_messages_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        msg_ids = []
+        raw = attrs.get("ids") or attrs.get("messages") or attrs.get("id") or body.strip()
+        if raw:
+            msg_ids = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+        if not msg_ids:
+            reply = await source_event.get_reply_message() if source_event else None
+            if reply:
+                msg_ids = [reply.id]
+        if not msg_ids:
+            return "message id(s) required"
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        try:
+            await self.agent.client.delete_messages(chat, msg_ids)
+            return f"{len(msg_ids)} message(s) deleted"
+        except Exception as exc:
+            return f"Delete failed: {exc}"
 
     async def cmd_admins(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._misc_tool("get_admins", attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        from telethon.tl.types import ChannelParticipantsAdmins
+        try:
+            admins = await self.agent.client.get_participants(chat, filter=ChannelParticipantsAdmins)
+            lines = []
+            for admin in admins:
+                name = f"{admin.first_name or ''} {admin.last_name or ''}".strip() or "Unknown"
+                username = f"@{admin.username}" if getattr(admin, "username", None) else ""
+                lines.append(f"{name} {username} [id={admin.id}]".strip())
+            return "\n".join(lines) if lines else "No admins found"
+        except Exception as exc:
+            return f"Get admins failed: {exc}"

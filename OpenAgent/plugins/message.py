@@ -27,6 +27,7 @@ class MessagePlugin:
         "message.history": "cmd_history",
         "search_messages": "cmd_search",
         "message.search": "cmd_search",
+        "chat.search": "cmd_search",
         "message.delete": "cmd_delete",
         "delete_messages": "cmd_delete",
         "message.forward": "cmd_forward",
@@ -63,22 +64,225 @@ class MessagePlugin:
         if tool_name == "message.send_current":
             chat = None
         message = body.strip() or attrs.get("message") or attrs.get("text") or ""
-        return await self.agent._send_userbot_message(message, source_event, chat=chat)
+        if not message:
+            return "message text is required"
+        try:
+            if chat:
+                target = await self.agent._resolve_tool_chat(chat, source_event)
+                msg = await self.agent.client.send_message(target, message)
+                return f"Sent to {chat}: {message[:200]}"
+            else:
+                msg = await self.agent.client.send_message(source_event.chat_id, message, reply_to=source_event.id if source_event else None)
+                return f"Sent: {message[:200]}"
+        except Exception as exc:
+            return f"Send failed: {exc}"
 
     async def cmd_history(self, attrs_raw: str, source_event: Any) -> str:
-        return await self.agent._history_tool(attrs_raw, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        lines = []
+        try:
+            async for msg in self.agent.client.iter_messages(chat, limit=limit):
+                sender = await msg.get_sender()
+                name = self.agent._format_sender_short(sender)
+                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
+                media = " [media]" if getattr(msg, "media", None) else ""
+                lines.append(f"#{msg.id} {name}: {text[:500]}{media}".strip())
+        except Exception as exc:
+            return f"History failed: {exc}"
+        return "\n".join(reversed(lines)) or "No messages"
 
     async def cmd_search(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._search_messages_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        query = attrs.get("query") or body.strip()
+        if not query:
+            return "Search query is empty"
+        limit = max(1, min(int(attrs.get("limit", "20") or 20), 100))
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("chat_id"), source_event)
+        lines = []
+        try:
+            async for msg in self.agent.client.iter_messages(chat, search=query, limit=limit):
+                sender = await msg.get_sender()
+                name = self.agent._format_sender_short(sender)
+                text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
+                lines.append(f"#{msg.id} {name}: {text[:500]}")
+        except Exception as exc:
+            return f"Search failed: {exc}"
+        return "\n".join(lines) or "No messages found"
 
     async def cmd_delete(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._delete_messages_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        msg_ids = []
+        raw = attrs.get("ids") or attrs.get("messages") or attrs.get("id") or body.strip()
+        if raw:
+            msg_ids = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+        if not msg_ids:
+            reply = await source_event.get_reply_message() if source_event else None
+            if reply:
+                msg_ids = [reply.id]
+        if not msg_ids:
+            return "message id(s) required"
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat"), source_event)
+        try:
+            await self.agent.client.delete_messages(chat, msg_ids)
+            return f"{len(msg_ids)} message(s) deleted"
+        except Exception as exc:
+            return f"Delete failed: {exc}"
 
     async def cmd_forward(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._forward_message_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        msg_id = attrs.get("message") or attrs.get("msg") or ""
+        src = await self.agent._resolve_tool_chat(attrs.get("from") or attrs.get("src"), source_event)
+        dst = await self.agent._resolve_tool_chat(attrs.get("to") or attrs.get("dst") or body.strip(), source_event)
+        try:
+            if msg_id and str(msg_id).isdigit():
+                msg = await self.agent.client.get_messages(src, ids=int(msg_id))
+                await self.agent.client.forward_messages(dst, msg)
+                return f"Message #{msg_id} forwarded"
+            reply = await source_event.get_reply_message() if source_event else None
+            if reply:
+                await self.agent.client.forward_messages(dst, reply)
+                return "Replied message forwarded"
+            return "message id or reply is needed"
+        except Exception as exc:
+            return f"Forward failed: {exc}"
 
     async def cmd_pin(self, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._pin_message_tool(attrs_raw, body, source_event)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        msg_id = attrs.get("message") or attrs.get("msg") or body.strip()
+        chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+        try:
+            if msg_id and str(msg_id).isdigit():
+                msg = await self.agent.client.get_messages(chat, ids=int(msg_id))
+            else:
+                msg = await source_event.get_reply_message() if source_event else None
+            if not msg:
+                return "Message not found"
+            await self.agent.client.pin_message(chat, msg.id)
+            return "Message pinned"
+        except Exception as exc:
+            return f"Pin failed: {exc}"
 
     async def cmd_misc(self, tool_name: str, attrs_raw: str, body: str, source_event: Any) -> str:
-        return await self.agent._misc_tool(self._MISC.get(tool_name, tool_name), attrs_raw, body, source_event)
+        op = self._MISC.get(tool_name, tool_name)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        try:
+            if op == "edit_message":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+                msg_id = attrs.get("message") or attrs.get("msg") or ""
+                text = body.strip() or attrs.get("text") or attrs.get("message") or ""
+                if not text:
+                    return "text is required"
+                if msg_id and str(msg_id).isdigit():
+                    msg = await self.agent.client.get_messages(chat, ids=int(msg_id))
+                    await msg.edit(text)
+                    return f"Message #{msg_id} edited"
+                reply = await source_event.get_reply_message() if source_event else None
+                if reply:
+                    await reply.edit(text)
+                    return "Replied message edited"
+                return "message id or reply needed"
+            
+            elif op == "reply_message":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+                text = body.strip() or attrs.get("text") or attrs.get("message") or ""
+                msg_id = attrs.get("message") or attrs.get("msg") or ""
+                if not text:
+                    return "reply text is required"
+                if msg_id and str(msg_id).isdigit():
+                    msg = await self.agent.client.get_messages(chat, ids=int(msg_id))
+                    await self.agent.client.send_message(chat, text, reply_to=msg.id)
+                    return f"Replied to #{msg_id}"
+                reply = await source_event.get_reply_message() if source_event else None
+                if reply:
+                    await self.agent.client.send_message(chat, text, reply_to=reply.id)
+                    return "Replied"
+                return "message id or reply needed"
+            
+            elif op == "react_message":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+                msg_id = attrs.get("message") or attrs.get("msg") or ""
+                emoji = attrs.get("emoji") or attrs.get("reaction") or body.strip() or "👍"
+                try:
+                    if msg_id and str(msg_id).isdigit():
+                        msg = await self.agent.client.get_messages(chat, ids=int(msg_id))
+                    else:
+                        msg = await source_event.get_reply_message() if source_event else None
+                    if not msg:
+                        return "Message not found"
+                    await msg.react(emoji)
+                    return f"Reacted {emoji}"
+                except Exception as exc:
+                    return f"React failed: {exc}"
+            
+            elif op == "get_message":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+                msg_id = attrs.get("message") or attrs.get("msg") or ""
+                if not msg_id or not str(msg_id).isdigit():
+                    reply = await source_event.get_reply_message() if source_event else None
+                    if reply:
+                        msg_id = str(reply.id)
+                    else:
+                        return "message id or reply needed"
+                try:
+                    msg = await self.agent.client.get_messages(chat, ids=int(msg_id))
+                    if not msg:
+                        return "Message not found"
+                    sender = await msg.get_sender()
+                    name = self.agent._format_sender_short(sender)
+                    text = getattr(msg, "raw_text", None) or getattr(msg, "text", "") or ""
+                    media = " [media]" if getattr(msg, "media", None) else ""
+                    return f"#{msg.id} {name}: {text[:2000]}{media}"
+                except Exception as exc:
+                    return f"Get message failed: {exc}"
+            
+            elif op == "mark_read":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or body.strip(), source_event)
+                try:
+                    await self.agent.client.send_read_acknowledge(chat)
+                    return "Marked as read"
+                except Exception as exc:
+                    return f"Mark read failed: {exc}"
+            
+            elif op == "typing":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or body.strip(), source_event)
+                try:
+                    from telethon.tl.functions.messages import SetTypingRequest
+                    from telethon.tl.types import SendMessageTypingAction
+                    await self.agent.client(SetTypingRequest(chat, SendMessageTypingAction()))
+                    return "Typing signal sent"
+                except Exception as exc:
+                    return f"Typing failed: {exc}"
+            
+            elif op == "schedule_message":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+                text = body.strip() or attrs.get("text") or attrs.get("message") or ""
+                schedule_str = attrs.get("schedule") or attrs.get("when") or ""
+                if not text or not schedule_str:
+                    return "text and schedule time are required"
+                from datetime import datetime, timedelta
+                try:
+                    minutes = int(schedule_str)
+                    when = datetime.now() + timedelta(minutes=minutes)
+                except ValueError:
+                    return "schedule: minutes as integer"
+                try:
+                    msg = await self.agent.client.send_message(chat, text, schedule=when)
+                    return f"Message scheduled for {schedule_str} min"
+                except Exception as exc:
+                    return f"Schedule failed: {exc}"
+            
+            elif op == "save_draft":
+                chat = await self.agent._resolve_tool_chat(attrs.get("chat") or attrs.get("to"), source_event)
+                text = body.strip() or attrs.get("text") or attrs.get("message") or ""
+                try:
+                    from telethon.tl.functions.messages import SaveDraftRequest
+                    await self.agent.client(SaveDraftRequest(peer=chat, message=text))
+                    return "Draft saved"
+                except Exception as exc:
+                    return f"Draft failed: {exc}"
+            
+            return f"Unknown message op: {op}"
+        except Exception as e:
+            return f"Message op {op} failed: {e}"

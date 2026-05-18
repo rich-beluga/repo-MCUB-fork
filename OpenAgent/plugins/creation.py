@@ -4,6 +4,16 @@
 from __future__ import annotations
 
 from typing import Any
+from telethon.tl.functions.channels import (
+    CreateChannelRequest,
+    EditPhotoRequest,
+    EditTitleRequest,
+    JoinChannelRequest,
+    ToggleSlowModeRequest,
+    UpdateUsernameRequest,
+)
+from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.types import ChatAdminRights
 
 
 class CreationPlugin:
@@ -34,11 +44,58 @@ class CreationPlugin:
         self.agent = agent
 
     async def cmd_channel_or_group(self, tool_name: str, attrs_raw: str, body: str) -> str:
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
         kind = "group" if tool_name.endswith("group") else "channel"
-        return await self.agent._create_channel_or_group(kind, attrs_raw, body)
+        title = attrs.get("title") or attrs.get("name") or body.strip()
+        about = attrs.get("about") or attrs.get("description") or ""
+        if not title:
+            return "Title is required"
+        try:
+            if kind == "group":
+                result = await self.agent.client(CreateChannelRequest(title, about, megagroup=True))
+                peer = result.chats[0]
+                return f"Group created: @{peer.username if getattr(peer, 'username', None) else peer.id}"
+            else:
+                result = await self.agent.client(CreateChannelRequest(title, about, megagroup=False))
+                peer = result.chats[0]
+                return f"Channel created: @{peer.username if getattr(peer, 'username', None) else peer.id}"
+        except Exception as exc:
+            return f"Creation failed: {exc}"
 
     async def cmd_bot(self, attrs_raw: str, body: str) -> str:
-        return await self.agent._create_bot_via_botfather(attrs_raw, body)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        name = attrs.get("name") or attrs.get("title") or body.strip()
+        username = attrs.get("username") or attrs.get("bot") or ""
+        about = attrs.get("about") or attrs.get("description") or ""
+        if not name or not username:
+            return "name and username are required"
+        from telethon.tl.functions.bots import CreateBotRequest
+        try:
+            result = await self.agent.client(CreateBotRequest(bot=username, name=name, about=about))
+            token = result.token
+            return f"Bot @{username} created. Token: {token}"
+        except Exception as exc:
+            return f"Bot creation failed: {exc}"
 
     async def cmd_join(self, attrs_raw: str, body: str) -> str:
-        return await self.agent._join_chat_tool(attrs_raw, body)
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
+        target = attrs.get("invite") or attrs.get("chat") or attrs.get("link") or body.strip()
+        if not target:
+            return "invite link or username is required"
+        try:
+            if target.startswith(("https://t.me/", "t.me/")):
+                parts = target.rstrip("/").split("/")
+                target = parts[-1]
+                if "joinchat" in target:
+                    hash_part = target.split("/")[-1] if "/" in target else target.split("=")[-1] if "=" in target else target
+                    await self.agent.client(ImportChatInviteRequest(hash_part))
+                    return f"Joined via invite link"
+            elif target.startswith("+"):
+                await self.agent.client(ImportChatInviteRequest(target[1:]))
+                return f"Joined via invite hash"
+            else:
+                entity = await self.agent.client.get_entity(target)
+                await self.agent.client(JoinChannelRequest(entity))
+                return f"Joined: {target}"
+        except Exception as exc:
+            return f"Join failed: {exc}"

@@ -31,15 +31,15 @@ class McubPlugin:
 
     def __init__(self, agent: Any) -> None:
         self.agent = agent
-
+    
     async def cmd_mcub(self, tool_name: str, attrs_raw: str, body: str, source_event: Any) -> str:
-        attrs = self.agent._parse_xml_attrs(attrs_raw)
         command_map = {
             "mcub.modules": "modules",
             "mcub.config": "cfg",
             "mcub.install": "dlm",
             "mcub.reload": "restart",
         }
+        attrs = self.agent._parse_xml_attrs(attrs_raw)
         command = (
             command_map.get(tool_name, "")
             or attrs.get("command")
@@ -48,4 +48,22 @@ class McubPlugin:
             or attrs.get("query")
             or body.strip()
         )
-        return await self.agent._run_mcub_command(command, source_event)
+        command = command.strip()
+        if not command:
+            return "Empty MCUB command"
+        prefix = getattr(self.agent.kernel, "custom_prefix", ".") or "."
+        if not command.startswith(prefix):
+            command = prefix + command
+        
+        cmd_name = command[len(prefix):].split(maxsplit=1)[0].lower()
+        if cmd_name in {"oa", "agent"}:
+            return "Blocked recursive OpenAgent command"
+        
+        event = self.agent._MCUBEvent(self.agent, source_event, command)
+        try:
+            handled = await self.agent.kernel.process_command(event)
+        except Exception as exc:
+            await self.agent.kernel.handle_error(exc, source="OpenAgent:mcub", event=source_event)
+            return f"MCUB command failed: {exc}"
+        output = event.output or f"Command handled: {handled}"
+        return output[-6000:]
