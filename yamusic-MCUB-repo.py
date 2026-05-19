@@ -473,7 +473,7 @@ class YaMusicModule(ModuleBase):
 
     @on_install
     async def _on_install(self) -> None:
-        await self.client.send_message("me", self.strings["iguide"])
+        await self.client.send_message("me", self.strings["iguide"], parse_mode='html')
 
     @loop(interval=1800, autostart=True)
     async def premium_check(self) -> None:
