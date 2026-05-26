@@ -13,6 +13,7 @@ import base64
 import contextlib
 import difflib
 import html
+import inspect
 import io
 import mimetypes
 import random
@@ -691,6 +692,7 @@ class OpenAgent(ModuleBase):
         self._plugins: dict[str, OpenAgentPlugin] = {}
         self._plugin_files: dict[str, Path] = {}
         self._plugins_cache: list[dict] = []
+        self._tool_map_cache: dict[str, str] | None = None
         await self._load_todo_items_storage()
         await self._load_installed_plugins()
         self.log.info("OpenAgent loaded")
@@ -1472,6 +1474,7 @@ class OpenAgent(ModuleBase):
             if key not in self.config.keys():
                 self.config._values[key] = self._plugin_config_value(key, value)
         self._plugins[name] = plugin
+        self._tool_map_cache = None  # invalidate after plugin list changes
         self.log.info(f"Plugin registered: {name} v{plugin.version}")
 
     def _plugin_config_value(self, key: str, value: object) -> ConfigValue:
@@ -1504,6 +1507,7 @@ class OpenAgent(ModuleBase):
         name = str(name or "").strip().lower()
         self._plugins.pop(name, None)
         self._plugin_files.pop(name, None)
+        self._tool_map_cache = None  # invalidate after plugin list changes
         self.log.info(f"Plugin unregistered: {name}")
 
     def _get_plugin_for_tool(self, tool_name: str) -> OpenAgentPlugin | None:
@@ -2013,15 +2017,14 @@ class OpenAgent(ModuleBase):
         base = str(self.config["system_prompt"]).strip()
         return (
             f"{base}\n\n"
-            "Your ONLY task right now: output exactly one tool_call using thinking.note.\n"
-            "The note must be one concise user-facing sentence, max 180 chars.\n"
-            "Say what you actually understood from the request and the immediate next step.\n"
-            "Do not write a generic heartbeat. Do not say you will clarify unless you truly need to ask a question next.\n"
-            "Available tools in this turn: thinking.note only.\n\n"
+            "Your ONLY task right now: output exactly one ```tool_call``` block using thinking.note.\n"
+            "The note must be one concise user-facing sentence (max 180 chars).\n"
+            "Say what you understood from the request and the immediate next step.\n"
+            "Do NOT write a generic heartbeat. Do NOT put any tool call JSON inside the note text.\n\n"
+            "Output ONLY this, nothing else:\n"
             "```tool_call\n"
-            "{\"tool\":\"thinking.note\",\"args\":{\"note\":\"Понял задачу: <кратко>. Дальше <следующий шаг>.\"}}\n"
-            "```\n"
-            "Output nothing else. No text before or after. No other tools."
+            "{\"tool\":\"thinking.note\",\"args\":{\"note\":\"Understood: <brief summary>. Next: <next step>.\"}}\n"
+            "```"
         )
 
     def _system_prompt(self, user_prompt: str = "") -> str:
@@ -2029,29 +2032,35 @@ class OpenAgent(ModuleBase):
         tlist = ", ".join(sorted(self._get_tool_map().keys()))
         todo_snapshot = self._format_todo_placeholder()
         prompt += (
-            f"\n\nOpenAgent 0.5.0 refreshed architecture is active. You have access to {len(self._effective_tool_registry())} tool operations.\n"
-            "To use tools, output one or more fenced JSON blocks in the same turn and nothing else. Batch independent tools to reduce latency:\n"
+            f"\n\nOpenAgent 0.6.5 is active. You have access to {len(self._effective_tool_registry())} tool operations.\n"
+            "\n## Tool call format\n"
+            "Output one or more fenced JSON blocks. Each block is ONE tool call:\n"
             "```tool_call\n"
             "{\"tool\":\"tool.name\",\"args\":{\"key\":\"value\"},\"body\":\"optional long text\"}\n"
             "```\n"
-            "Use args for structured parameters and body for commands, messages, file content, or long text.\n"
-            "If a non-startup progress note and a real tool can run without seeing the note output, emit thinking.note and the real tool in the same turn.\n"
-            "Do not use XML/HTML tags for new tool calls; legacy XML is only a compatibility fallback.\n"
+            "Use `args` for structured parameters. Use `body` for commands, messages, file content, or long text.\n"
+            "\n## Batching — emit multiple blocks in ONE turn to save steps\n"
+            "```tool_call\n"
+            "{\"tool\":\"thinking.note\",\"args\":{\"note\":\"Listing files to find the config\"}}\n"
+            "```\n"
+            "```tool_call\n"
+            "{\"tool\":\"terminal.run\",\"args\":{\"cmd\":\"ls -la\"}}\n"
+            "```\n"
+            "RULE: thinking.note body/note MUST be plain text. NEVER put a tool call JSON inside thinking.note.\n"
+            "WRONG: {\"tool\":\"thinking.note\",\"args\":{\"note\":\"{\\\"tool\\\":\\\"terminal.run\\\",\\\"args\\\":{\\\"cmd\\\":\\\"ls\\\"}}\"}}\n"
+            "RIGHT: two separate ```tool_call``` blocks as shown above.\n"
+            "\n## Format rules\n"
+            "- ONLY ```tool_call``` fenced JSON blocks. No XML tags. No plain JSON outside fences.\n"
+            "- When no tool is needed: reply in plain text with no ```tool_call``` blocks at all.\n"
             f"Available tool names: {tlist}\n"
-            "\nCore guidelines:\n"
-            "1. Use terminal.run for shell commands (cwd is dynamic).\n"
-            "2. Use web.search for search or web.fetch_url for direct page reading.\n"
-            "3. Use message.send_current or message.send_target for sending messages only when explicitly requested.\n"
-            "4. Use chat.* and profile.* for management.\n"
-            "5. If the request mentions a domain you may not know (MCUB modules, releases, debugger, styling, Python, etc.), call skills.activate with a short query before acting. If you need to create a skill for later use, use skills.save_from_ai.\n"
-            "6. For mcub.command, pass the command WITHOUT the userbot prefix. Correct: {\"tool\":\"mcub.command\",\"args\":{\"command\":\"ping\"}} or body 'ping'. Incorrect: '1ping' or '.ping'. The runtime adds the current prefix ({prefix}) automatically.\n"
-            "7. A separate startup thinking.note turn has already been completed before this main tool loop; do not repeat a startup/prologue note before the first real tool.\n"
-            "8. Do NOT use tools unless the user request actually requires tools or explicitly asks for an action/tool. Simple greetings or chat like 'ку' must be answered directly in plain text, e.g. 'Привет!', with no tool calls.\n"
-            "9. Use thinking.note only for meaningful later progress updates: after important findings, before risky/long actions, before sending/saving final artifacts, or when switching approach. Avoid hidden chain-of-thought; notes must be concise user-facing status updates.\n"
-            "10. TODO discipline: if the task has multiple steps or the user mentions todo/plan/checklist, keep todo.* synchronized with real progress.\n"
-            "11. TODO discipline: add planned steps with todo.add, update wording with todo.edit, mark current executing task with todo.current, mark finished work with todo.close, and use todo.closeall only when every item is truly done.\n"
-            "12. Before final answer for multi-step work, ensure TODO state is up to date and reflects what is completed vs pending. If all items are done and no further steps remain, call todo.clear unless the user asked to keep history.\n"
-            "Never explain tool calls. Just output the tool_call block(s) and wait for results."
+            "\n## Guidelines\n"
+            "1. Use only tools from 'Available tool names'. Wrong names fail immediately.\n"
+            "2. mcub.* tools: omit the userbot prefix (body='ping', not '.ping').\n"
+            "3. Unknown domain? Call skills.activate first. To persist knowledge: skills.save_from_ai.\n"
+            "4. Simple greetings/questions: answer in plain text, no tools.\n"
+            "5. thinking.note: use for meaningful progress updates only — findings, risky actions, approach changes.\n"
+            "6. Multi-step tasks: keep todo.* in sync (todo.add → todo.current → todo.close → todo.clear).\n"
+            "Never explain tool calls. Output the block(s) and wait for results."
         )
         prompt += "\n\nCurrent TODO state:\n" + todo_snapshot
         prompt += self._load_skills_prompt(user_prompt)
@@ -3089,6 +3098,33 @@ class OpenAgent(ModuleBase):
 
     def _invalid_tool_call_error(self, text: str) -> str:
         """Return a user-facing error when the model attempted an invalid tool call."""
+        # First check: did the model put a real tool call inside thinking.note?
+        for match in self.TOOL_CALL_JSON_RE.finditer(text or ""):
+            raw = match.group(1).strip()
+            for item in self._iter_json_tool_payloads(raw):
+                tool_name = str(item.get("tool") or item.get("name") or "").lower().strip()
+                if tool_name == "thinking.note":
+                    note_val = ""
+                    args = item.get("args") or {}
+                    if isinstance(args, dict):
+                        note_val = str(args.get("note") or args.get("text") or "").strip()
+                    if not note_val:
+                        note_val = str(item.get("body") or "").strip()
+                    embedded = self._extract_json_tool_calls(note_val)
+                    real = [c for c in embedded if c[0] != "thinking.note"]
+                    if real:
+                        names = ", ".join(c[0] for c in real)
+                        return (
+                            f"[FORMAT ERROR] You put tool call(s) ({names}) inside thinking.note. "
+                            "They were NOT executed. Each tool must be its own separate ```tool_call``` block:\n"
+                            "```tool_call\n"
+                            "{\"tool\":\"thinking.note\",\"args\":{\"note\":\"your plain-text note\"}}\n"
+                            "```\n"
+                            "```tool_call\n"
+                            f"{{\"tool\":\"{real[0][0]}\",\"args\":{{...}}}}\n"
+                            "```\n"
+                            "Retry now with separate blocks."
+                        )
         raw_items: list[str] = []
         stripped = (text or "").strip()
         if stripped.startswith("{") or stripped.startswith("["):
@@ -3143,15 +3179,49 @@ class OpenAgent(ModuleBase):
         calls = self._extract_xml_tool_calls(text)
         return calls[0] if calls else None
 
+    def _rescue_embedded_tool_calls(
+        self, calls: list[tuple[str, str, str]]
+    ) -> list[tuple[str, str, str]]:
+        """When the model puts a real tool call inside thinking.note body, surface it.
+
+        Models occasionally emit:
+            ```tool_call
+            {"tool":"thinking.note","args":{"note":"{\"tool\":\"terminal.run\",\"args\":{\"cmd\":\"ls\"}}"}}
+            ```
+        instead of two separate blocks. This method rescues those embedded calls
+        so they are executed in the same step, while preserving the thinking.note
+        itself (its handler will return a FORMAT ERROR that teaches the model).
+        """
+        result: list[tuple[str, str, str]] = []
+        for name, attrs_raw, body in calls:
+            result.append((name, attrs_raw, body))
+            if name == "thinking.note":
+                raw = (body or "").strip()
+                # Also check the note= arg if body is empty
+                if not raw:
+                    try:
+                        for item in self._iter_json_tool_payloads(attrs_raw):
+                            raw = str(item.get("note") or item.get("text") or "").strip()
+                            if raw:
+                                break
+                    except Exception:
+                        pass
+                embedded = self._extract_json_tool_calls(raw)
+                for emb_name, emb_attrs, emb_body in embedded:
+                    if emb_name != "thinking.note":
+                        result.append((emb_name, emb_attrs, emb_body))
+        return result
+
     def _extract_tool_calls(self, text: str) -> list[tuple[str, str, str]]:
         """Return executable tool calls; JSON/Codex protocols first, XML fallback second."""
         calls = self._extract_json_tool_calls(text)
         if calls:
-            return calls
+            return self._rescue_embedded_tool_calls(calls)
         calls = self._extract_codex_tool_calls(text)
         if calls:
-            return calls
-        return self._extract_xml_tool_calls(text)
+            return self._rescue_embedded_tool_calls(calls)
+        calls = self._extract_xml_tool_calls(text)
+        return self._rescue_embedded_tool_calls(calls) if calls else calls
 
     def _extract_tool_call(self, text: str) -> tuple[str, str, str] | None:
         """Return the first executable tool call; kept for compatibility."""
@@ -4162,6 +4232,19 @@ class OpenAgent(ModuleBase):
 
     async def _thinking_note_tool(self, attrs_raw: str, body: str) -> str:
         await asyncio.sleep(0)
+        # Detect when the model incorrectly put a real tool call inside the note body.
+        # Surface an actionable error so the retry loop corrects the format.
+        raw_body = (body or "").strip()
+        embedded = self._extract_json_tool_calls(raw_body)
+        real_embedded = [c for c in embedded if c[0] != "thinking.note"]
+        if real_embedded:
+            names = ", ".join(c[0] for c in real_embedded)
+            return (
+                f"[FORMAT ERROR] Tool call(s) found inside thinking.note body: {names}. "
+                "The embedded tool(s) were NOT executed. "
+                "Emit each tool as its own separate ```tool_call``` block. "
+                "thinking.note must contain plain text only, never JSON tool calls."
+            )
         note = self._thinking_note_text(attrs_raw, body)
         if not note:
             return "Thinking note recorded."
@@ -4205,7 +4288,12 @@ class OpenAgent(ModuleBase):
 
 
     def _get_tool_map(self) -> dict[str, str]:
-        """Unified mapping of tool tags to internal methods. Merges core + plugin maps."""
+        """Unified mapping of tool tags to internal methods. Merges core + plugin maps.
+
+        Cached after first build; invalidated by _register_plugin / _unregister_plugin.
+        """
+        if getattr(self, "_tool_map_cache", None) is not None:
+            return self._tool_map_cache  # type: ignore[return-value]
         core = {
             # Core tools tightly coupled with module internals.
             "thinking.note": "_thinking_note_tool",
@@ -4248,6 +4336,7 @@ class OpenAgent(ModuleBase):
                 if not tname or not handler:
                     continue
                 core[str(tname).strip().lower()] = str(handler).strip()
+        self._tool_map_cache: dict[str, str] = core
         return core
 
     async def _dispatch_tool(
@@ -4272,7 +4361,6 @@ class OpenAgent(ModuleBase):
 
         
         handler_method = None
-        is_misc = False
         plugin_owner: "OpenAgentPlugin | None" = None
         
         # Check plugin handlers first. Exact tool_map ownership supports
@@ -4288,11 +4376,6 @@ class OpenAgent(ModuleBase):
                     handler_method = getattr(plugin_owner, p_handler, None)
         if not handler_method and method_name:
             handler_method = getattr(self, method_name, None)
-            is_misc = method_name == "_misc_tool"
-        if not handler_method and name in misc_tools:
-            handler_method = self._misc_tool
-            is_misc = True
-            
         if not handler_method:
             candidates = sorted(self._tool_names())
             nearest = ", ".join(difflib.get_close_matches(name, candidates, n=5, cutoff=0.45))
@@ -4331,10 +4414,11 @@ class OpenAgent(ModuleBase):
             
         try:
             # Normalize arguments based on method signature
-            import inspect
             sig = inspect.signature(handler_method)
             params = sig.parameters
-            
+            # Parse XML attrs once; reused for mode/target/mcub/skill branches below.
+            attrs = self._parse_xml_attrs(attrs_raw)
+
             kwargs = {}
             if "tool_name" in params: kwargs["tool_name"] = name
             if "attrs_raw" in params: kwargs["attrs_raw"] = attrs_raw
@@ -4350,8 +4434,8 @@ class OpenAgent(ModuleBase):
                 elif name.endswith("list_all"):
                     kwargs["mode"] = "all"
                 else:
-                    kwargs["mode"] = body.strip() or self._parse_xml_attrs(attrs_raw).get("mode") or "private"
-            if "target" in params: kwargs["target"] = body.strip() or self._parse_xml_attrs(attrs_raw).get("target", "")
+                    kwargs["mode"] = body.strip() or attrs.get("mode") or "private"
+            if "target" in params: kwargs["target"] = body.strip() or attrs.get("target", "")
             
             if method_name == "_run_mcub_command" and not kwargs.get("command"):
                 command_map = {
@@ -4360,7 +4444,6 @@ class OpenAgent(ModuleBase):
                     "mcub.install": "dlm",
                     "mcub.reload": "restart",
                 }
-                attrs = self._parse_xml_attrs(attrs_raw)
                 kwargs["command"] = (
                     command_map.get(name, "")
                     or attrs.get("command")
@@ -4371,7 +4454,6 @@ class OpenAgent(ModuleBase):
                 )
                 result = await handler_method(**kwargs)
             elif method_name == "_save_skill":
-                attrs = self._parse_xml_attrs(attrs_raw)
                 result = await self._skills_registry_tool(name, attrs_raw, body or attrs.get("content", ""))
             else:
                 result = await handler_method(**kwargs)
