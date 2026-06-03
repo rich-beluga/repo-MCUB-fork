@@ -1,705 +1,595 @@
-# author: @Hairpin00
-# version: 1.0.1
-# description: aдмин мoдyль
+from __future__ import annotations
 
-import time
-import asyncio
-from telethon import events, Button
-from telethon.tl import functions, types
+import json
+import re
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from telethon import events
 from telethon.tl.functions.channels import EditBannedRequest
-from telethon.tl.types import ChatBannedRights
+from telethon.tl.types import ChatBannedRights, PeerUser
 
-def register(kernel):
-    client = kernel.client
+from core.lib.loader.module_base import ModuleBase, command
 
-    kernel.config.setdefault('admin_log_chat_id', None)
-    kernel.config.setdefault('admin_max_warns', 3)
-    kernel.config.setdefault('admin_mute_duration', 3600)
-    kernel.config.setdefault('admin_use_bot', True)
 
-    warns_storage = {}
+def _parse_duration(s: str) -> timedelta | None:
+    """Parse '1min' / '2h' / '3d' / '1w' / '1m' into timedelta. Returns None on bad input."""
+    m = re.fullmatch(r"(\d+)(min|h|d|w|m)", s.strip())
+    if not m:
+        return None
+    v, u = int(m.group(1)), m.group(2)
+    return {
+        "min": timedelta(minutes=v),
+        "h": timedelta(hours=v),
+        "d": timedelta(days=v),
+        "w": timedelta(weeks=v),
+        "m": timedelta(days=v * 30),
+    }[u]
 
-    def get_warns_key(chat_id, user_id):
-        return f"{chat_id}_{user_id}"
 
-    def get_user_warns(chat_id, user_id):
-        key = get_warns_key(chat_id, user_id)
-        return warns_storage.get(key, 0)
+def _fmt_duration(td: timedelta) -> str:
+    """Human-readable duration string (RU-style)."""
+    s = int(td.total_seconds())
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}min"
+    if s < 86400:
+        return f"{s // 3600}h"
+    if s < 604800:
+        return f"{s // 86400}d"
+    return f"{s // 604800}w"
 
-    def add_user_warn(chat_id, user_id):
-        key = get_warns_key(chat_id, user_id)
-        current = warns_storage.get(key, 0)
-        warns_storage[key] = current + 1
-        return warns_storage[key]
 
-    def remove_user_warn(chat_id, user_id):
-        key = get_warns_key(chat_id, user_id)
-        current = warns_storage.get(key, 0)
-        if current > 0:
-            warns_storage[key] = current - 1
-        return warns_storage[key]
+class Admin(ModuleBase):
+    name = "AdminMod"
+    version = "1.0.0"
+    author = "@rich_beluga"
+    description = {
+        "ru": "Инструменты администратора: мут, бан, варн и др.",
+        "en": "Admin tools: mute, ban, warn, and more.",
+    }
 
-    def clear_user_warns(chat_id, user_id):
-        key = get_warns_key(chat_id, user_id)
-        warns_storage.pop(key, None)
+    # Max warns before auto-ban
+    MAX_WARNS: int = 3
 
-    async def resolve_user(event, user_arg):
-        if not user_arg:
-            if event.reply_to_msg_id:
+    strings = {
+        "ru": {
+            "no_target": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Укажи цель: ответь на сообщение или укажи @username/ID.</blockquote>',
+            "no_duration": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Укажи срок (например: <code>1h</code>, <code>30min</code>, <code>2d</code>).</blockquote>',
+            "invalid_duration": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Неверный формат времени.\nПримеры: <code>1min</code>, <code>2h</code>, <code>3d</code>, <code>1w</code>, <code>1m</code>.</blockquote>',
+            "not_a_group": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Команда работает только в группах/супергруппах.</blockquote>',
+            "user_not_found": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Пользователь не найден.</blockquote>',
+            "error": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Ошибка: <code>{err}</code></blockquote>',
+            "muted": '<blockquote><a href="tg://emoji?id=5258267368877989660">🔇</a> <code>{user}</code> замучен на <code>{duration}</code>.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "muted_perm": '<blockquote><a href="tg://emoji?id=5258267368877989660">🔇</a> <code>{user}</code> замучен навсегда.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "unmuted": '<blockquote><a href="tg://emoji?id=5260325873688518261">🔊</a> <code>{user}</code> размучен.</blockquote>',
+            "banned": '<blockquote><a href="tg://emoji?id=5275969776668134187">⛔️</a> <code>{user}</code> забанен на <code>{duration}</code>.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "banned_perm": '<blockquote><a href="tg://emoji?id=5275969776668134187">⛔️</a> <code>{user}</code> забанен навсегда.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "unbanned": '<blockquote><a href="tg://emoji?id=5260726538302660868">✅</a> <code>{user}</code> разбанен.</blockquote>',
+            "warned": '<blockquote><a href="tg://emoji?id=5258474669769497337">❗️</a> <code>{user}</code> получает предупреждение ({count}/{max}).\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "warned_autoban": '<blockquote><a href="tg://emoji?id=5275969776668134187">⛔️</a> <code>{user}</code> — {count}/{max} предупреждений, выдан перманентный бан!\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "warn_removed": '<blockquote><a href="tg://emoji?id=5260726538302660868">✅</a> С <code>{user}</code> снято {removed} предупр. Осталось: <b>{count}</b>/{max}.</blockquote>',
+            "no_warns": '<blockquote><a href="tg://emoji?id=5429571366384842791">🔎</a> У <code>{user}</code> нет предупреждений.</blockquote>',
+            "kicked": '<blockquote><a href="tg://emoji?id=5260726538302660868">👢</a> <code>{user}</code> кикнут из чата.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Причина:<b> <code>{reason}</code></blockquote>',
+            "clean_start": '<blockquote><a href="tg://emoji?id=5429571366384842791">🔎</a> Ищу удалённые аккаунты...</blockquote>',
+            "clean_none": '<blockquote><a href="tg://emoji?id=5260726538302660868">✅</a> Удалённых аккаунтов не найдено.</blockquote>',
+            "clean_done": '<blockquote><a href="tg://emoji?id=5260726538302660868">🧹</a> Удалено аккаунтов: <b>{removed}</b> из <b>{total}</b> найденных.</blockquote>',
+        },
+        "en": {
+            "no_target": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Specify a target: reply to a message or provide @username/ID.</blockquote>',
+            "no_duration": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Specify a duration (e.g. <code>1h</code>, <code>30min</code>, <code>2d</code>).</blockquote>',
+            "invalid_duration": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Invalid time format.\nExamples: <code>1min</code>, <code>2h</code>, <code>3d</code>, <code>1w</code>, <code>1m</code>.</blockquote>',
+            "not_a_group": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> This command only works in groups/supergroups.</blockquote>',
+            "user_not_found": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> User not found.</blockquote>',
+            "error": '<blockquote><a href="tg://emoji?id=5260342697075416641">❌</a> Error: <code>{err}</code></blockquote>',
+            "muted": '<blockquote><a href="tg://emoji?id=5258267368877989660">🔇</a> <code>{user}</code> muted for <code>{duration}</code>.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "muted_perm": '<blockquote><a href="tg://emoji?id=5258267368877989660">🔇</a> <code>{user}</code> muted permanently.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "unmuted": '<blockquote><a href="tg://emoji?id=5260325873688518261">🔊</a> <code>{user}</code> unmuted.</blockquote>',
+            "banned": '<blockquote><a href="tg://emoji?id=5275969776668134187">⛔️</a> <code>{user}</code> banned for <code>{duration}</code>.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "banned_perm": '<blockquote><a href="tg://emoji?id=5275969776668134187">⛔️</a> <code>{user}</code> banned permanently.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "unbanned": '<blockquote><a href="tg://emoji?id=5260726538302660868">✅</a> <code>{user}</code> unbanned.</blockquote>',
+            "warned": '<blockquote><a href="tg://emoji?id=5258474669769497337">❗️</a> <code>{user}</code> warned ({count}/{max}).\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "warned_autoban": '<blockquote><a href="tg://emoji?id=5275969776668134187">⛔️</a> <code>{user}</code> — {count}/{max} warnings, permanent ban issued!\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "warn_removed": '<blockquote><a href="tg://emoji?id=5260726538302660868">✅</a> Removed {removed} warning(s) from <code>{user}</code>. Left: <b>{count}</b>/{max}.</blockquote>',
+            "no_warns": '<blockquote><a href="tg://emoji?id=5429571366384842791">🔎</a> <code>{user}</code> has no warnings.</blockquote>',
+            "kicked": '<blockquote><a href="tg://emoji?id=5260726538302660868">👢</a> <code>{user}</code> kicked from chat.\n<a href="tg://emoji?id=6010374833135688013">😵‍💫</a> <b>Reason:<b> <code>{reason}</code></blockquote>',
+            "clean_start": '<blockquote><a href="tg://emoji?id=5429571366384842791">🔎</a> Searching for deleted accounts...</blockquote>',
+            "clean_none": '<blockquote><a href="tg://emoji?id=5260726538302660868">✅</a> No deleted accounts found.</blockquote>',
+            "clean_done": '<blockquote><a href="tg://emoji?id=5260726538302660868">🧹</a> Removed accounts: <b>{removed}</b> of <b>{total}</b> found.</blockquote>',
+        },
+    }
+
+    async def _resolve_target(
+        self,
+        event: events.NewMessage.Event,
+        args: list[str],
+    ) -> tuple[Any | None, list[str]]:
+        """
+        Resolve the target user and return remaining args.
+
+        Priority:
+          1. Replied-to message sender (args untouched — they're duration/reason).
+          2. First arg is @username or numeric ID (consumed from args).
+        """
+        if event.reply_to_msg_id:
+            try:
                 reply = await event.get_reply_message()
-                if reply:
-                    return await reply.get_sender()
-            return None
-
-        try:
-            if user_arg.isdigit():
-                return await client.get_entity(int(user_arg))
-            elif user_arg.startswith('@'):
-                return await client.get_entity(user_arg[1:])
-            else:
-                return await client.get_entity(user_arg)
-        except Exception:
-            return None
-
-    async def send_admin_log_bot(action, target_user, chat, reason, source_message=None):
-        try:
-            inline_bot_username = kernel.config.get('inline_bot_username')
-            if not inline_bot_username:
-                return None
-
-            chat_title = getattr(chat, 'title', 'Private Chat')
-            user_name = getattr(target_user, 'first_name', 'Unknown')
-            if hasattr(target_user, 'last_name') and target_user.last_name:
-                user_name = f"{user_name} {target_user.last_name}"
-
-            username = getattr(target_user, 'username', None)
-            user_link = f"@{username}" if username else f"ID: {target_user.id}"
-
-            log_text = f"""🔨 Aдмин дeйcтвиe
-
-Дeйcтвиe: {action}
-Пoльзoвaтeль: {user_name} ({user_link})
-Чaт: {chat_title}
-Пpичинa: {reason or 'He yкaзaнa'}
-Вpeмя: {time.strftime('%Y-%m-%d %H:%M:%S')}"""
-
-            buttons = []
-
-            if action == 'бaн':
-                buttons.append([Button.inline("🔓 Paзбaнить", f"unban_{chat.id}_{target_user.id}".encode())])
-            elif action == 'кик':
-                buttons.append([Button.inline("📥 Пpиглacить oбpaтнo", f"invite_{chat.id}_{target_user.id}".encode())])
-            elif action == 'мyт':
-                buttons.append([Button.inline("🔊 Paзмyтить", f"unmute_{chat.id}_{target_user.id}".encode())])
-            elif action == 'вapн':
-                buttons.append([Button.inline("❌ Cнять вapн", f"unwarn_{chat.id}_{target_user.id}".encode())])
-
-            if source_message:
-                chat_id_for_link = str(chat.id).replace('-100', '')
-                message_link = f"https://t.me/c/{chat_id_for_link}/{source_message.id}"
-                buttons.append([Button.url("👁️ Пocмoтpeть cooбщeниe", message_link)])
-
-            log_chat_id = kernel.config.get('admin_log_chat_id')
-            if not log_chat_id:
-                return None
-
-            log_chat = await client.get_entity(log_chat_id)
-
-            sent_msg = await client.send_message(
-                log_chat,
-                log_text,
-                parse_mode='html',
-                buttons=buttons if buttons else None
-            )
-
-            return sent_msg
-
-        except Exception as e:
-            await kernel.handle_error(e, source="send_admin_log_bot", event=None)
-            return None
-
-    async def send_admin_log_inline(action, target_user, chat, reason, source_message=None):
-        try:
-            inline_bot_username = kernel.config.get('inline_bot_username')
-            if not inline_bot_username:
-                return None
-
-            chat_title = getattr(chat, 'title', 'Private Chat')
-            user_name = getattr(target_user, 'first_name', 'Unknown')
-            if hasattr(target_user, 'last_name') and target_user.last_name:
-                user_name = f"{user_name} {target_user.last_name}"
-
-            username = getattr(target_user, 'username', None)
-            user_link = f"@{username}" if username else f"ID: {target_user.id}"
-
-            log_text = f"""🔨 Aдмин дeйcтвиe
-
-Дeйcтвиe: {action}
-Пoльзoвaтeль: {user_name} ({user_link})
-Чaт: {chat_title}
-Пpичинa: {reason or 'He yкaзaнa'}
-Вpeмя: {time.strftime('%Y-%m-%d %H:%M:%S')}"""
-
-            buttons = []
-
-            if action == 'бaн':
-                buttons.append([Button.inline("🔓 Paзбaнить", f"unban_{chat.id}_{target_user.id}".encode())])
-            elif action == 'кик':
-                buttons.append([Button.inline("📥 Пpиглacить oбpaтнo", f"invite_{chat.id}_{target_user.id}".encode())])
-            elif action == 'мyт':
-                buttons.append([Button.inline("🔊 Paзмyтить", f"unmute_{chat.id}_{target_user.id}".encode())])
-            elif action == 'вapн':
-                buttons.append([Button.inline("❌ Cнять вapн", f"unwarn_{chat.id}_{target_user.id}".encode())])
-
-            if source_message:
-                chat_id_for_link = str(chat.id).replace('-100', '')
-                message_link = f"https://t.me/c/{chat_id_for_link}/{source_message.id}"
-                buttons.append([Button.url("👁️ Пocмoтpeть cooбщeниe", message_link)])
-
-            log_chat_id = kernel.config.get('admin_log_chat_id')
-            if not log_chat_id:
-                return None
-
-            try:
-                await kernel.send_inline(log_chat_id, 'admin_log', text=log_text, buttons=buttons)
-                return True
-            except Exception as e:
-                await kernel.handle_error(e, source="send_admin_log_inline", event=None)
-                return None
-
-        except Exception as e:
-            await kernel.handle_error(e, source="send_admin_log_inline", event=None)
-            return None
-
-    async def send_admin_log(action, target_user, chat, reason, source_message=None):
-        use_bot = kernel.config.get('admin_use_bot', True)
-
-        if use_bot:
-            return await send_admin_log_bot(action, target_user, chat, reason, source_message)
-        else:
-            return await send_admin_log_inline(action, target_user, chat, reason, source_message)
-
-    @kernel.register.command('ban')
-    async def ban_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .ban [@username/id/oтвeт] [пpичинa]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-            reason = ' '.join(args[2:]) if len(args) > 2 else None
-
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            if target_user.id == (await client.get_me()).id:
-                await event.edit("❌ He мoгy зaбaнить ceбя")
-                return
-
-            try:
-                banned_rights = ChatBannedRights(
-                    until_date=None,
-                    view_messages=True,
-                    send_messages=True,
-                    send_media=True,
-                    send_stickers=True,
-                    send_gifs=True,
-                    send_games=True,
-                    send_inline=True,
-                    send_polls=True,
-                    change_info=True,
-                    invite_users=True,
-                    pin_messages=True
-                )
-
-                await client(EditBannedRequest(
-                    channel=event.chat_id,
-                    participant=target_user,
-                    banned_rights=banned_rights
-                ))
-
-                await send_admin_log('бaн', target_user, await event.get_chat(), reason, event.message)
-
-                user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-                await event.edit(f"✅ Пoльзoвaтeль {user_name} зaбaнeн")
-
-            except Exception as e:
-                if "not admin" in str(e).lower():
-                    await event.edit("❌ Heт пpaв aдминиcтpaтopa")
-                else:
-                    raise
-
-        except Exception as e:
-            await kernel.handle_error(e, source="ban_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('unban')
-    async def unban_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .unban [@username/id/oтвeт]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            try:
-                unbanned_rights = ChatBannedRights(
-                    until_date=None,
-                    view_messages=False,
-                    send_messages=False,
-                    send_media=False,
-                    send_stickers=False,
-                    send_gifs=False,
-                    send_games=False,
-                    send_inline=False,
-                    send_polls=False,
-                    change_info=False,
-                    invite_users=False,
-                    pin_messages=False
-                )
-
-                await client(EditBannedRequest(
-                    channel=event.chat_id,
-                    participant=target_user,
-                    banned_rights=unbanned_rights
-                ))
-
-                user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-                await event.edit(f"✅ Пoльзoвaтeль {user_name} paзбaнeн")
-
-            except Exception as e:
-                if "not admin" in str(e).lower():
-                    await event.edit("❌ Heт пpaв aдминиcтpaтopa")
-                else:
-                    raise
-
-        except Exception as e:
-            await kernel.handle_error(e, source="unban_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('kick')
-    async def kick_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .kick [@username/id/oтвeт] [пpичинa]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-            reason = ' '.join(args[2:]) if len(args) > 2 else None
-
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            if target_user.id == (await client.get_me()).id:
-                await event.edit("❌ He мoгy кикнyть ceбя")
-                return
-
-            try:
-                await client.kick_participant(event.chat_id, target_user)
-
-                await send_admin_log('кик', target_user, await event.get_chat(), reason, event.message)
-
-                user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-                await event.edit(f"✅ Пoльзoвaтeль {user_name} кикнyт")
-
-            except Exception as e:
-                if "not admin" in str(e).lower():
-                    await event.edit("❌ Heт пpaв aдминиcтpaтopa")
-                else:
-                    raise
-
-        except Exception as e:
-            await kernel.handle_error(e, source="kick_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('mute')
-    async def mute_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .mute [@username/id/oтвeт] [вpeмя в минyтax] [пpичинa]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-
-            duration = kernel.config.get('admin_mute_duration', 3600)
-            reason_start = 2
-
-            if len(args) > 2 and args[2].isdigit():
-                duration = int(args[2]) * 60
-                reason_start = 3
-
-            reason = ' '.join(args[reason_start:]) if len(args) > reason_start else None
-
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            if target_user.id == (await client.get_me()).id:
-                await event.edit("❌ He мoгy зaмyтить ceбя")
-                return
-
-            try:
-                until_date = int(time.time() + duration) if duration > 0 else None
-
-                muted_rights = ChatBannedRights(
-                    until_date=until_date,
-                    send_messages=True,
-                    send_media=True,
-                    send_stickers=True,
-                    send_gifs=True,
-                    send_games=True,
-                    send_inline=True,
-                    send_polls=True
-                )
-
-                await client(EditBannedRequest(
-                    channel=event.chat_id,
-                    participant=target_user,
-                    banned_rights=muted_rights
-                ))
-
-                await send_admin_log('мyт', target_user, await event.get_chat(), reason, event.message)
-
-                user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-                duration_text = f"{duration // 60} минyт" if duration > 0 else "нaвceгдa"
-                await event.edit(f"✅ Пoльзoвaтeль {user_name} зaмyчeн нa {duration_text}")
-
-            except Exception as e:
-                if "not admin" in str(e).lower():
-                    await event.edit("❌ Heт пpaв aдминиcтpaтopa")
-                else:
-                    raise
-
-        except Exception as e:
-            await kernel.handle_error(e, source="mute_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('unmute')
-    async def unmute_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .unmute [@username/id/oтвeт]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            try:
-                unmuted_rights = ChatBannedRights(
-                    until_date=None,
-                    send_messages=False,
-                    send_media=False,
-                    send_stickers=False,
-                    send_gifs=False,
-                    send_games=False,
-                    send_inline=False,
-                    send_polls=False
-                )
-
-                await client(EditBannedRequest(
-                    channel=event.chat_id,
-                    participant=target_user,
-                    banned_rights=unmuted_rights
-                ))
-
-                user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-                await event.edit(f"✅ Пoльзoвaтeль {user_name} paзмyчeн")
-
-            except Exception as e:
-                if "not admin" in str(e).lower():
-                    await event.edit("❌ Heт пpaв aдминиcтpaтopa")
-                else:
-                    raise
-
-        except Exception as e:
-            await kernel.handle_error(e, source="unmute_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('warn')
-    async def warn_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .warn [@username/id/oтвeт] [пpичинa]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-            reason = ' '.join(args[2:]) if len(args) > 2 else None
-
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            if target_user.id == (await client.get_me()).id:
-                await event.edit("❌ He мoгy выдaть вapн ceбe")
-                return
-
-            chat = await event.get_chat()
-            warns_count = add_user_warn(chat.id, target_user.id)
-
-            await send_admin_log('вapн', target_user, chat, reason, event.message)
-
-            user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-            max_warns = kernel.config.get('admin_max_warns', 3)
-
-            if warns_count >= max_warns:
+                if reply and reply.sender:
+                    return reply.sender, args
+            except Exception:
+                pass
+
+        if args:
+            first = args[0]
+            if first.startswith("@"):
                 try:
-                    banned_rights = ChatBannedRights(
-                        until_date=None,
-                        view_messages=True,
-                        send_messages=True
-                    )
-
-                    await client(EditBannedRequest(
-                        channel=event.chat_id,
-                        participant=target_user,
-                        banned_rights=banned_rights
-                    ))
-
-                    clear_user_warns(chat.id, target_user.id)
-                    await event.edit(f"⚠️ Пoльзoвaтeль {user_name} пoлyчил {warns_count}/{max_warns} вapнoв и был зaбaнeн")
+                    return await self.client.get_entity(first), args[1:]
                 except Exception:
-                    await event.edit(f"⚠️ Пoльзoвaтeль {user_name} пoлyчил {warns_count}/{max_warns} вapнoв (нe yдaлocь зaбaнить)")
-            else:
-                await event.edit(f"⚠️ Пoльзoвaтeль {user_name} пoлyчил вapн ({warns_count}/{max_warns})")
+                    return None, args
+            if first.lstrip("-").isdigit():
+                entity = await self._resolve_id(event, int(first))
+                return entity, args[1:]
 
-        except Exception as e:
-            await kernel.handle_error(e, source="warn_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
+        return None, args
 
-    @kernel.register.command('unwarn')
-    async def unwarn_cmd(event):
+    async def _resolve_id(
+        self,
+        event: events.NewMessage.Event,
+        uid: int,
+    ) -> Any | None:
+        """
+        Resolve a bare numeric user ID to a full entity.
+
+        A raw ID is not resolvable on its own — Telethon needs the user's
+        access_hash. We first try the global cache, then fall back to scanning
+        the current chat's participants, where the access_hash is always present.
+        """
         try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
+            return await self.client.get_entity(PeerUser(uid))
+        except Exception:
+            pass
 
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .unwarn [@username/id/oтвeт]")
-                return
-
-            user_arg = args[1] if len(args) > 1 else None
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
-
-            chat = await event.get_chat()
-            warns_count = remove_user_warn(chat.id, target_user.id)
-
-            user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-            await event.edit(f"✅ Cнят вapн c пoльзoвaтeля {user_name} (ocтaлocь: {warns_count})")
-
-        except Exception as e:
-            await kernel.handle_error(e, source="unwarn_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('warns')
-    async def warns_cmd(event):
         try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
+            async for p in self.client.iter_participants(event.chat_id):
+                if p.id == uid:
+                    return p
+        except Exception:
+            pass
 
-            args = event.text.split()
-            if len(args) < 2 and not event.reply_to_msg_id:
-                await event.edit("❌ Иcпoльзoвaниe: .warns [@username/id/oтвeт]")
-                return
+        return None
 
-            user_arg = args[1] if len(args) > 1 else None
-            target_user = await resolve_user(event, user_arg)
-            if not target_user:
-                await event.edit("❌ Пoльзoвaтeль нe нaйдeн")
-                return
+    def _user_link(self, user: Any) -> str:
+        """HTML mention that works even for users without @username."""
+        name = (
+            getattr(user, "first_name", None)
+            or getattr(user, "title", None)
+            or str(user.id)
+        )
+        return f'<a href="tg://user?id={user.id}">{name}</a>'
 
-            chat = await event.get_chat()
-            warns_count = get_user_warns(chat.id, target_user.id)
-
-            user_name = getattr(target_user, 'first_name', 'Пoльзoвaтeль')
-            max_warns = kernel.config.get('admin_max_warns', 3)
-            await event.edit(f"⚠️ Пoльзoвaтeль {user_name} имeeт {warns_count}/{max_warns} вapнoв")
-
-        except Exception as e:
-            await kernel.handle_error(e, source="warns_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    @kernel.register.command('purge')
-    async def purge_cmd(event):
-        try:
-            if not event.is_group and not event.is_channel:
-                await event.edit("❌ Этa кoмaндa тoлькo для гpyпп и кaнaлoв")
-                return
-
-            if not event.reply_to_msg_id:
-                await event.edit("❌ Oтвeтьтe нa cooбщeниe для oчиcтки")
-                return
-
+    async def _get_warns(self, chat_id: int) -> dict[str, int]:
+        raw = await self.db.db_get(self.name, f"warns_{chat_id}")
+        if raw:
             try:
-                await event.delete()
+                return json.loads(raw)
+            except Exception:
+                pass
+        return {}
 
-                reply = await event.get_reply_message()
-                deleted = await client.delete_messages(
+    async def _save_warns(self, chat_id: int, data: dict[str, int]) -> None:
+        await self.db.db_set(self.name, f"warns_{chat_id}", json.dumps(data))
+
+    async def _edit(self, event: events.NewMessage.Event, text: str) -> None:
+        await event.edit(text, parse_mode="html")
+
+    @command(
+        "mute",
+        doc_ru="Замутить. Использование: mute {цель} {срок} {причина}",
+        doc_en="Mute user. Usage: mute {target} {duration} {reason}",
+    )
+    async def cmd_mute(self, event: events.NewMessage.Event) -> None:
+        """
+        mute {ID/@username/reply} {срок} {причина}
+
+        Срок: 1min / 2h / 3d / 1w / 1m
+        """
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        raw = self.args_raw(event).split()
+        user, rest = await self._resolve_target(event, raw)
+
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
+        if not rest:
+            await self._edit(event, self.strings["no_duration"])
+            return
+
+        td = _parse_duration(rest[0])
+        if td is None:
+            await self._edit(event, self.strings["invalid_duration"])
+            return
+
+        reason = " ".join(rest[1:]) or "—"
+        until = datetime.now(tz=UTC) + td
+
+        try:
+            await self.client(
+                EditBannedRequest(
                     event.chat_id,
-                    list(range(reply.id, event.id))
+                    user,
+                    ChatBannedRights(
+                        until_date=until,
+                        send_messages=True,
+                        send_media=True,
+                        send_stickers=True,
+                        send_gifs=True,
+                        send_games=True,
+                        send_inline=True,
+                        embed_links=True,
+                    ),
                 )
-
-                msg = await event.respond(f"✅ Удaлeнo {len(deleted)} cooбщeний")
-                await asyncio.sleep(3)
-                await msg.delete()
-
-            except Exception as e:
-                if "not admin" in str(e).lower():
-                    await event.edit("❌ Heт пpaв aдминиcтpaтopa")
-                else:
-                    raise
-
-        except Exception as e:
-            await kernel.handle_error(e, source="purge_cmd", event=event)
-            await event.edit("🌩️ <b>Oшибкa, cмoтpи лoги</b>", parse_mode='html')
-
-    async def inline_admin_handler(event):
-        try:
-            builder = event.builder.article(
-                title="Aдмин дeйcтвиe",
-                text="Лoгиpoвaниe aдмин дeйcтвий",
-                buttons=[
-                    [Button.inline("🔓 Paзбaнить", b"test_unban"),
-                     Button.inline("📥 Пpиглacить", b"test_invite")],
-                    [Button.inline("🔊 Paзмyтить", b"test_unmute"),
-                     Button.inline("❌ Cнять вapн", b"test_unwarn")],
-                    [Button.url("👁️ Пocмoтpeть", "https://t.me")]
-                ]
             )
-            await event.answer([builder])
+            await self._edit(
+                event,
+                self.strings(
+                    "muted",
+                    user=self._user_link(user),
+                    duration=_fmt_duration(td),
+                    reason=reason,
+                ),
+            )
         except Exception as e:
-            await kernel.handle_error(e, source="inline_admin_handler", event=event)
+            await self._edit(event, self.strings("error", err=str(e)))
 
-    kernel.register_inline_handler('admin_log', inline_admin_handler)
+    @command(
+        "unmute",
+        doc_ru="Размутить. Использование: unmute {цель}",
+        doc_en="Unmute user. Usage: unmute {target}",
+    )
+    async def cmd_unmute(self, event: events.NewMessage.Event) -> None:
+        """unmute {ID/@username/reply}"""
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
 
-    async def admin_callback_handler(event):
+        user, _ = await self._resolve_target(event, self.args_raw(event).split())
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
         try:
-            data = event.data.decode()
-
-            if data.startswith('unban_'):
-                _, chat_id, user_id = data.split('_')
-                chat_id = int(chat_id)
-                user_id = int(user_id)
-
-                try:
-                    unbanned_rights = ChatBannedRights(
-                        until_date=None,
-                        view_messages=False
-                    )
-
-                    user_entity = await client.get_entity(user_id)
-                    await client(EditBannedRequest(
-                        channel=chat_id,
-                        participant=user_entity,
-                        banned_rights=unbanned_rights
-                    ))
-
-                    await event.answer("✅ Пoльзoвaтeль paзбaнeн", alert=True)
-                    await event.edit(buttons=None)
-
-                except Exception as e:
-                    await event.answer("❌ Oшибкa пpи paзбaнe", alert=True)
-
-            elif data.startswith('invite_'):
-                _, chat_id, user_id = data.split('_')
-                chat_id = int(chat_id)
-                user_id = int(user_id)
-
-                try:
-                    user_entity = await client.get_entity(user_id)
-                    await client.add_chat_users(chat_id, [user_entity])
-
-                    await event.answer("✅ Пoльзoвaтeль пpиглaшeн", alert=True)
-                    await event.edit(buttons=None)
-
-                except Exception as e:
-                    await event.answer("❌ Oшибкa пpи пpиглaшeнии", alert=True)
-
-            elif data.startswith('unmute_'):
-                _, chat_id, user_id = data.split('_')
-                chat_id = int(chat_id)
-                user_id = int(user_id)
-
-                try:
-                    unmuted_rights = ChatBannedRights(
-                        until_date=None,
-                        send_messages=False
-                    )
-
-                    user_entity = await client.get_entity(user_id)
-                    await client(EditBannedRequest(
-                        channel=chat_id,
-                        participant=user_entity,
-                        banned_rights=unmuted_rights
-                    ))
-
-                    await event.answer("✅ Пoльзoвaтeль paзмyчeн", alert=True)
-                    await event.edit(buttons=None)
-
-                except Exception as e:
-                    await event.answer("❌ Oшибкa пpи paзмyтe", alert=True)
-
-            elif data.startswith('unwarn_'):
-                _, chat_id, user_id = data.split('_')
-                chat_id = int(chat_id)
-                user_id = int(user_id)
-
-                remove_user_warn(chat_id, user_id)
-                await event.answer("✅ Вapн cнят", alert=True)
-                await event.edit(buttons=None)
-
+            await self.client(
+                EditBannedRequest(
+                    event.chat_id,
+                    user,
+                    ChatBannedRights(until_date=None),
+                )
+            )
+            await self._edit(event, self.strings("unmuted", user=self._user_link(user)))
         except Exception as e:
-            await kernel.handle_error(e, source="admin_callback_handler", event=event)
-            await event.answer("❌ Пpoизoшлa oшибкa", alert=True)
+            await self._edit(event, self.strings("error", err=str(e)))
 
-    kernel.register_callback_handler('unban_', admin_callback_handler)
-    kernel.register_callback_handler('invite_', admin_callback_handler)
-    kernel.register_callback_handler('unmute_', admin_callback_handler)
-    kernel.register_callback_handler('unwarn_', admin_callback_handler)
+    @command(
+        "ban",
+        doc_ru="Забанить. Использование: ban {цель} [{срок}] {причина}",
+        doc_en="Ban user. Usage: ban {target} [{duration}] {reason}",
+    )
+    async def cmd_ban(self, event: events.NewMessage.Event) -> None:
+        """
+        ban {ID/@username/reply} [{срок}] {причина}
+
+        Если срок не указан — перманентный бан.
+        """
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        raw = self.args_raw(event).split()
+        user, rest = await self._resolve_target(event, raw)
+
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
+        td: timedelta | None = None
+        until: datetime | None = None
+        reason = "—"
+
+        if rest:
+            td = _parse_duration(rest[0])
+            if td:
+                until = datetime.now(tz=UTC) + td
+                reason = " ".join(rest[1:]) or "—"
+            else:
+                reason = " ".join(rest) or "—"
+
+        try:
+            await self.client(
+                EditBannedRequest(
+                    event.chat_id,
+                    user,
+                    ChatBannedRights(until_date=until, view_messages=True),
+                )
+            )
+            if td:
+                await self._edit(
+                    event,
+                    self.strings(
+                        "banned",
+                        user=self._user_link(user),
+                        duration=_fmt_duration(td),
+                        reason=reason,
+                    ),
+                )
+            else:
+                await self._edit(
+                    event,
+                    self.strings(
+                        "banned_perm",
+                        user=self._user_link(user),
+                        reason=reason,
+                    ),
+                )
+        except Exception as e:
+            await self._edit(event, self.strings("error", err=str(e)))
+
+    @command(
+        "unban",
+        doc_ru="Разбанить. Использование: unban {цель}",
+        doc_en="Unban user. Usage: unban {target}",
+    )
+    async def cmd_unban(self, event: events.NewMessage.Event) -> None:
+        """unban {ID/@username/reply}"""
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        user, _ = await self._resolve_target(event, self.args_raw(event).split())
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
+        try:
+            await self.client(
+                EditBannedRequest(
+                    event.chat_id,
+                    user,
+                    ChatBannedRights(until_date=None),
+                )
+            )
+            await self._edit(
+                event, self.strings("unbanned", user=self._user_link(user))
+            )
+        except Exception as e:
+            await self._edit(event, self.strings("error", err=str(e)))
+
+    @command(
+        "warn",
+        doc_ru="Предупредить. Использование: warn {цель} {причина}",
+        doc_en="Warn user. Usage: warn {target} {reason}",
+    )
+    async def cmd_warn(self, event: events.NewMessage.Event) -> None:
+        """
+        warn {ID/@username/reply} {причина}
+
+        При достижении MAX_WARNS — автоматический перманентный бан.
+        """
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        raw = self.args_raw(event).split()
+        user, rest = await self._resolve_target(event, raw)
+
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
+        reason = " ".join(rest) or "—"
+        warns = await self._get_warns(event.chat_id)
+        uid = str(user.id)
+        warns[uid] = warns.get(uid, 0) + 1
+        await self._save_warns(event.chat_id, warns)
+
+        count = warns[uid]
+        if count >= self.MAX_WARNS:
+            # Auto-ban on limit
+            try:
+                await self.client(
+                    EditBannedRequest(
+                        event.chat_id,
+                        user,
+                        ChatBannedRights(until_date=None, view_messages=True),
+                    )
+                )
+            except Exception:
+                pass
+            await self._edit(
+                event,
+                self.strings(
+                    "warned_autoban",
+                    user=self._user_link(user),
+                    count=count,
+                    max=self.MAX_WARNS,
+                    reason=reason,
+                ),
+            )
+        else:
+            await self._edit(
+                event,
+                self.strings(
+                    "warned",
+                    user=self._user_link(user),
+                    count=count,
+                    max=self.MAX_WARNS,
+                    reason=reason,
+                ),
+            )
+
+    @command(
+        "unwarn",
+        doc_ru="Снять варны. Использование: unwarn {цель} [{количество}]",
+        doc_en="Remove warns. Usage: unwarn {target} [{count}]",
+    )
+    async def cmd_unwarn(self, event: events.NewMessage.Event) -> None:
+        """
+        unwarn {ID/@username/reply} [{количество}]
+
+        Если количество не указано — снимается 1 варн.
+        """
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        raw = self.args_raw(event).split()
+        user, rest = await self._resolve_target(event, raw)
+
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
+        to_remove = 1
+        if rest and rest[0].isdigit():
+            to_remove = max(1, int(rest[0]))
+
+        warns = await self._get_warns(event.chat_id)
+        uid = str(user.id)
+        current = warns.get(uid, 0)
+
+        if current == 0:
+            await self._edit(
+                event, self.strings("no_warns", user=self._user_link(user))
+            )
+            return
+
+        removed = min(to_remove, current)
+        warns[uid] = current - removed
+        if warns[uid] <= 0:
+            del warns[uid]
+
+        await self._save_warns(event.chat_id, warns)
+        await self._edit(
+            event,
+            self.strings(
+                "warn_removed",
+                user=self._user_link(user),
+                removed=removed,
+                count=warns.get(uid, 0),
+                max=self.MAX_WARNS,
+            ),
+        )
+
+    @command(
+        "kick",
+        doc_ru="Кикнуть пользователя. Использование: kick {цель} [причина]",
+        doc_en="Kick user. Usage: kick {target} [reason]",
+    )
+    async def cmd_kick(self, event: events.NewMessage.Event) -> None:
+        """
+        kick {ID/@username/reply} [причина]
+
+        Кикает пользователя из группы без бана (бан + немедленный разбан).
+        """
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        raw = self.args_raw(event).split()
+        user, rest = await self._resolve_target(event, raw)
+
+        if not user:
+            await self._edit(event, self.strings["no_target"])
+            return
+
+        reason = " ".join(rest) or "—"
+
+        try:
+            await self.client(
+                EditBannedRequest(
+                    event.chat_id,
+                    user,
+                    ChatBannedRights(until_date=None, view_messages=True),
+                )
+            )
+            await self.client(
+                EditBannedRequest(
+                    event.chat_id,
+                    user,
+                    ChatBannedRights(until_date=None),
+                )
+            )
+            await self._edit(
+                event,
+                self.strings(
+                    "kicked",
+                    user=self._user_link(user),
+                    reason=reason,
+                ),
+            )
+        except Exception as e:
+            await self._edit(event, self.strings("error", err=str(e)))
+
+    @command(
+        "cleandeleted",
+        alias=["cleandel", "cleanup"],
+        doc_ru="Удалить из группы все удалённые аккаунты.",
+        doc_en="Remove all deleted accounts from the group.",
+    )
+    async def cmd_cleandeleted(self, event: events.NewMessage.Event) -> None:
+        """
+        cleandeleted
+
+        Сканирует участников и кикает все удалённые (deleted) аккаунты.
+        """
+        if not event.is_group:
+            await self._edit(event, self.strings["not_a_group"])
+            return
+
+        await self._edit(event, self.strings["clean_start"])
+
+        deleted: list[Any] = []
+        try:
+            async for p in self.client.iter_participants(event.chat_id):
+                if getattr(p, "deleted", False):
+                    deleted.append(p)
+        except Exception as e:
+            await self._edit(event, self.strings("error", err=str(e)))
+            return
+
+        if not deleted:
+            await self._edit(event, self.strings["clean_none"])
+            return
+
+        removed = 0
+        for user in deleted:
+            try:
+                await self.client(
+                    EditBannedRequest(
+                        event.chat_id,
+                        user,
+                        ChatBannedRights(until_date=None, view_messages=True),
+                    )
+                )
+                await self.client(
+                    EditBannedRequest(
+                        event.chat_id,
+                        user,
+                        ChatBannedRights(until_date=None),
+                    )
+                )
+                removed += 1
+            except Exception:
+                continue
+
+        await self._edit(
+            event,
+            self.strings("clean_done", removed=removed, total=len(deleted)),
+        )
+
+    async def on_load(self) -> None:
+        self.log.info(f"{self.name} v{self.version} by {self.author} — loaded")
