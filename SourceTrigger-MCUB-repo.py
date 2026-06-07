@@ -1,8 +1,6 @@
-# version: 1.1.4
-# author: @RnPlugins
-# description: Sends media/text from source channel in response to text triggers
-# banner_url: https://x0.at/NcPW.png
-# scop: kernel min v1.0.0
+# repo - https://github.com/hairpin01/repo-MCUB-fork/edit/main/SourceTrigger-MCUB-repo.py
+# RnDev - https://t.me/RnPlugins
+# scop: kernel min v1.4.0
 
 from __future__ import annotations
 
@@ -53,6 +51,7 @@ class SourceTriggerMod(ModuleBase):
         "ru": "Отправляет медиа/текст из исходного канала в ответ на текстовые триггеры.",
         "en": "Sends media/text from source channel in response to text triggers.",
     }
+    banner_url = 'https://x0.at/NcPW.png'
 
     strings: dict[str, dict[str, str]] = {
         "ru": {
