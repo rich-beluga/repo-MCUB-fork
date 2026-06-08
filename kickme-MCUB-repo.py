@@ -1,3 +1,4 @@
+# name: kickme-MCUB-repo
 # requires:
 # author:
 # version: 1.0.3

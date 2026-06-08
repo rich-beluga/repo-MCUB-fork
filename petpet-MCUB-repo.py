@@ -1,3 +1,4 @@
+# name: petpet-MCUB-repo
 # requires: pet-pet-gif pillow
 # author: @Hicota @Hairpin00
 # version: 1.0.0

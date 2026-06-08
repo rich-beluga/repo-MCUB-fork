@@ -1,3 +1,4 @@
+# name: core-loader-MCUB-repo
 # requires: aiohttp
 # author: @Hairpin00
 # version: 1.0.2

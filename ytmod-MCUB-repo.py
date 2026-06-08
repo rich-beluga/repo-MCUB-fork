@@ -1,3 +1,4 @@
+# name: ytmod-MCUB-repo
 # requires: yt-dlp
 # author: @negrmefedron && @Hairpin00
 # version: 1.0.0-youtube

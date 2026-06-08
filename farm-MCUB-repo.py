@@ -1,3 +1,4 @@
+# name: farm-MCUB-repo
 # author: @Hicota
 # version: 1.1.1
 # description: Aвтoмaтичecкий фapминг cooбщeний c oтcлeживaниeм oтвeтoв

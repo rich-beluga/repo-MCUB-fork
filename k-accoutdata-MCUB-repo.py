@@ -1,3 +1,4 @@
+# name: k-accoutdata-MCUB-repo
 # requires: numpy dateutil
 # author: @kmodules
 # version: 1.1.0

@@ -1,3 +1,4 @@
+# name: qr-tool-MCUB-liber
 # ----------------------------------------------------------
 #  /\_/\  🌐 This module was loaded through https://t.me/hikkamods_bot
 # ( o.o )  🔓 Not licensed.

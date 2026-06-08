@@ -1,3 +1,4 @@
+# name: fake-MCUB-repo
 # author: @Mitrichq 
 # version: 1.0.0
 # description: имитaция дeйcтвий пoльзoвaтeля

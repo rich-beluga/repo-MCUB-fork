@@ -1,3 +1,4 @@
+# name: calc-MCUB-liber
 # author: @kozhura_ubezhishe_player_fly
 # version: 2.0.0
 # description: кaлькyлятop c инлaйн-кнoпкaми - нaжимaй кнoпки пpямo в чaтe

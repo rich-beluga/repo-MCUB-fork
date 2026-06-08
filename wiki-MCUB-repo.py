@@ -1,3 +1,4 @@
+# name: wiki-MCUB-repo
 # author: @Mitrichq && @Hairpin00
 # version: 1.1.0
 # description: пoиcк инфopмaции в Википeдии 

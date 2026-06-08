@@ -1,3 +1,4 @@
+# name: clicker-MCUB-repo
 # requires: 
 # author: @Hairpin00
 # version: 1.0.0

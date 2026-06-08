@@ -1,3 +1,4 @@
+# name: mcub-repo-helper-MCUB-repo
 # requires: aiohttp
 # author: MCUB Team
 # version: 1.1.0

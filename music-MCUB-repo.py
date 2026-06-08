@@ -1,3 +1,4 @@
+# name: music-MCUB-repo
 # requires: shazamio, aiofiles, aiohttp
 # author: @Mitrichq && @Hairpin00
 # version: 2.0.0

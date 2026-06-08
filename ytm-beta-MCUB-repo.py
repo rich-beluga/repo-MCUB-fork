@@ -1,3 +1,4 @@
+# name: ytm-beta-MCUB-repo
 # requires: yt-dlp, ytmusicapi
 # author: OpenAI && @Hairpin00
 # version: 1.0.0-beta

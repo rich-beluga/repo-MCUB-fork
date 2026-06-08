@@ -1,3 +1,4 @@
+# name: virustotal-MCUB-repo
 # requires: aiohttp, telethon
 # author: ктoтo
 # version: 1.2.0

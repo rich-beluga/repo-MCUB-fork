@@ -1,3 +1,4 @@
+# name: logger-MCUB-repo
 # requires: aiosqlite, aiofiles
 # author: @Mitritchq && @Hairpin00
 # version: 2.0.0

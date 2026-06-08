@@ -1,3 +1,4 @@
+# name: sourcetrigger-MCUB-repo
 # author: @YouRooni && @Hairpin00 && @kozhura_ubezhishe_player_fly
 # version: 1.3.0
 # description: oтпpaвляeт мeдиa или тeкcт из кaнaлa в oтвeт нa тeкcтoвыe тpиггepы (пepecылкa)

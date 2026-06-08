@@ -1,3 +1,4 @@
+# name: bot-send-MCUB-repo
 # requires:
 # author: @Hairpin00
 # version: 1.0.2

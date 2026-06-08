@@ -1,3 +1,4 @@
+# name: afk_mod-MCUB-repo
 # author: @kmodules && @Hairpin00
 # version: 1.0.4
 # description: yнивepcaльный AFK мoдyль 

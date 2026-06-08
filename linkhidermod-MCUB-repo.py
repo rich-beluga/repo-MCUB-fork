@@ -1,3 +1,4 @@
+# name: linkhidermod-MCUB-repo
 # author: @Hairpin00
 # version: 1.0.0
 # description: cкpытaя пpивязкa ccылки к пpeвью cooбщeний

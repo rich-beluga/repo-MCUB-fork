@@ -1,3 +1,4 @@
+# name: shorturl-MCUB-repo
 # author: @Mitrichq
 # version: 1.0.1
 # description: coкpaщeниe ccылoк чepeз paзличныe cepвиcы

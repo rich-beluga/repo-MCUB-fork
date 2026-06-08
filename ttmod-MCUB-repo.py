@@ -1,3 +1,4 @@
+# name: ttmod-MCUB-repo
 # requires: yt-dlp
 # author: @Hairpin00
 # version: 1.0.0

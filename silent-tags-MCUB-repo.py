@@ -1,3 +1,4 @@
+# name: silent-tags-MCUB-repo
 # meta: requires: telethon>=1.24.0
 # meta: author: @hikarimods
 # meta: version: 2.1.0

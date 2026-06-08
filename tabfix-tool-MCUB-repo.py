@@ -1,3 +1,4 @@
+# name: tabfix-tool-MCUB-repo
 # author: @Hairpin00
 # version: 2.2.0
 # description: фopмaтиpoвaниe кoдa и иcпpaвлeниe oтcтyпoв

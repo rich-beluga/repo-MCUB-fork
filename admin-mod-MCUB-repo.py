@@ -1,3 +1,4 @@
+# name: admin-mod-MCUB-repo
 # author: @Hairpin00
 # version: 1.0.1
 # description: aдмин мoдyль

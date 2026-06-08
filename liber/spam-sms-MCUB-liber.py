@@ -1,3 +1,4 @@
+# name: spam-sms-MCUB-liber
 # requires:
 # author:
 # version: 1.0.0

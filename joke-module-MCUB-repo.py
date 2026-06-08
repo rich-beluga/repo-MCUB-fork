@@ -1,3 +1,4 @@
+# name: joke-module-MCUB-repo
 # github: https://github.com/hairpin01/repo-MCUB-fork
 # source github (original): https://github.com/Deseara/D-modules/blob/main/joke_module.py
 # Channel: https://t.me/LinuxGram2

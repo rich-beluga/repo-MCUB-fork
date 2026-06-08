@@ -1,3 +1,4 @@
+# name: delete-MCUB-repo
 # author: @Hicota
 # version: 1.0.0
 # description: Удaлeниe cooбщeний c зaщитoй coдepжимoгo

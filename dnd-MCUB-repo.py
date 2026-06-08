@@ -1,3 +1,4 @@
+# name: dnd-MCUB-repo
 # author: unknown
 # version: 1.1.3
 # description:  Unit «SIGMA»
